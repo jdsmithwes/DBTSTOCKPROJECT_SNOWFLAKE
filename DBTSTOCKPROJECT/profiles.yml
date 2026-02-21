@@ -1,0 +1,9 @@
+DBTSTOCKPROJECT:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      role: DBT_ROLE
+      warehouse: DASH_WH_SI
+      database: DBT_STOCKPROJECT
+      schema: DBT_DEV
