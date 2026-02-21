@@ -1,0 +1,2 @@
+# DBTSTOCKPROJECT_SNOWFLAKE
+Stock Market DBT PROJECT built in Snowflake
