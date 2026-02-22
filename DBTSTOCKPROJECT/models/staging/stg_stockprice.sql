@@ -3,7 +3,7 @@
   with source_data as (
       select
       *
-      from DBT_STOCKPROJECT.PUBLIC.RAW_STOCK_DATA
+      from {{ source('public', 'RAW_STOCK_DATA') }}
   )
 
   select *

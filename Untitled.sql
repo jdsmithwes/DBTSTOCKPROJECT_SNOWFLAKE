@@ -1,0 +1,1 @@
+select max(load_timestamp) from stg_companyoverview;
