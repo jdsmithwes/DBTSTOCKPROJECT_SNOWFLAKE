@@ -1,0 +1,8 @@
+version: 2
+sources:
+  - name: public
+    database: DBT_STOCKPROJECT
+    schema: PUBLIC
+    tables:
+      - name: RAW_STOCK_DATA
+      - name: RAW_COMPANY_OVERVIEW
