@@ -23,13 +23,13 @@ snapshot-paths:
 
 models:
   DBTSTOCKPROJECT:
-    +materialized: table
+    +materialized: view
     staging:
-      +materialized: table
+      +materialized: view
       +schema: staging
     intermediate:
-      +materialized: table
+      +materialized: view
       +schema: intermediate
     marts:
-      +materialized: table
+      +materialized: view
       +schema: marts

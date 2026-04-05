@@ -1,4 +1,5 @@
 SELECT
+ticker,
 analyst_target_price,
 analyst_rating_strong_buy,
 analyst_rating_buy,
