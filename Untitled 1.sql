@@ -334,3 +334,131 @@ CREATE SCHEMA IF NOT EXISTS DBT_STOCKPROJECT.DBT_DEV
 
 
 drop schema dbt_stockproject.dbt_dev;
+
+CREATE OR REPLACE NOTIFICATION INTEGRATION dbtstockproject_notification
+    TYPE = EMAIL
+    ENABLED = TRUE
+    ALLOWED_RECIPIENTS = ('jdsmithwes@protonmail.com');
+
+GRANT USAGE ON INTEGRATION dbtstockproject_notification TO ROLE dbt_role;
+
+CREATE OR REPLACE TASK DBT_STOCKPROJECT.PUBLIC.MONITOR_TASK_FAILURES
+    WAREHOUSE = DBT_STOCKPROJECT
+    SCHEDULE  = 'USING CRON 15 6 * * * America/New_York'
+AS
+    CALL SYSTEM$SEND_EMAIL(
+        'dbtstockproject_notification',
+        'jdsmithwes@protonmail.com',
+        'DBT Stock Project - Task Failure Alert',
+        (SELECT COALESCE(
+            (SELECT LISTAGG('Task: ' || NAME || ' | Error: ' || ERROR_MESSAGE, '\n') 
+             FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY(
+                 SCHEDULED_TIME_RANGE_START => DATEADD(HOUR, -24, CURRENT_TIMESTAMP()),
+                 RESULT_LIMIT => 100
+             ))
+             WHERE STATE = 'FAILED'),
+            'No task failures in the last 24 hours.'
+        ))
+    );
+
+CREATE OR REPLACE TASK refresh_indicator_metadata
+    WAREHOUSE = DBT_STOCKPROJECT
+    SCHEDULE = 'USING CRON 0 6 * * * America/New_York'
+AS
+MERGE INTO dbt_stockproject.public.industry_leading_indicators_metadata AS target
+USING industrybased_economic_leading_indicators.public.industry_leading_indicators_metadata AS source
+    ON target.INDICATORID = source.INDICATORID
+WHEN MATCHED THEN UPDATE SET
+    target.AGGREGATE        = source.AGGREGATE,
+    target.COUNT            = source.COUNT,
+    target.CREATED          = source.CREATED,
+    target.DESCRIPTION      = source.DESCRIPTION,
+    target.ENDTIME          = source.ENDTIME,
+    target.FREQUENCY        = source.FREQUENCY,
+    target.LASTMODIFIED     = source.LASTMODIFIED,
+    target.NAME             = source.NAME,
+    target.SOURCE           = source.SOURCE,
+    target.SEASONALITY      = source.SEASONALITY,
+    target.STARTTIME        = source.STARTTIME,
+    target.TYPE             = source.TYPE,
+    target.UNITS            = source.UNITS,
+    target.NOTES            = source.NOTES,
+    target.TAGS             = source.TAGS,
+    target.CALCULATION      = source.CALCULATION,
+    target.CITATION         = source.CITATION,
+    target.CLASSIFICATION   = source.CLASSIFICATION,
+    target.INDUSTRYLIST     = source.INDUSTRYLIST
+WHEN NOT MATCHED THEN INSERT (
+    INDICATORID, AGGREGATE, COUNT, CREATED, DESCRIPTION, ENDTIME,
+    FREQUENCY, LASTMODIFIED, NAME, SOURCE, SEASONALITY, STARTTIME,
+    TYPE, UNITS, NOTES, TAGS, CALCULATION, CITATION, CLASSIFICATION, INDUSTRYLIST
+)
+VALUES (
+    source.INDICATORID, source.AGGREGATE, source.COUNT, source.CREATED,
+    source.DESCRIPTION, source.ENDTIME, source.FREQUENCY, source.LASTMODIFIED,
+    source.NAME, source.SOURCE, source.SEASONALITY, source.STARTTIME,
+    source.TYPE, source.UNITS, source.NOTES, source.TAGS, source.CALCULATION,
+    source.CITATION, source.CLASSIFICATION, source.INDUSTRYLIST
+);
+
+show tasks
+
+
+CREATE OR REPLACE TASK refresh_indicator_metadata
+    WAREHOUSE = DBT_STOCKPROJECT
+    SCHEDULE = 'USING CRON 0 6 * * * America/New_York'
+    --ERROR_INTEGRATION = dbtstockproject_notification
+AS
+MERGE INTO dbt_stockproject.public.industry_leading_indicators_metadata AS target
+USING industrybased_economic_leading_indicators.public.industry_leading_indicators_metadata AS source
+    ON target.INDICATORID = source.INDICATORID
+WHEN MATCHED THEN UPDATE SET
+    target.AGGREGATE        = source.AGGREGATE,
+    target.COUNT            = source.COUNT,
+    target.CREATED          = source.CREATED,
+    target.DESCRIPTION      = source.DESCRIPTION,
+    target.ENDTIME          = source.ENDTIME,
+    target.FREQUENCY        = source.FREQUENCY,
+    target.LASTMODIFIED     = source.LASTMODIFIED,
+    target.NAME             = source.NAME,
+    target.SOURCE           = source.SOURCE,
+    target.SEASONALITY      = source.SEASONALITY,
+    target.STARTTIME        = source.STARTTIME,
+    target.TYPE             = source.TYPE,
+    target.UNITS            = source.UNITS,
+    target.NOTES            = source.NOTES,
+    target.TAGS             = source.TAGS,
+    target.CALCULATION      = source.CALCULATION,
+    target.CITATION         = source.CITATION,
+    target.CLASSIFICATION   = source.CLASSIFICATION,
+    target.INDUSTRYLIST     = source.INDUSTRYLIST
+WHEN NOT MATCHED THEN INSERT (
+    INDICATORID, AGGREGATE, COUNT, CREATED, DESCRIPTION, ENDTIME,
+    FREQUENCY, LASTMODIFIED, NAME, SOURCE, SEASONALITY, STARTTIME,
+    TYPE, UNITS, NOTES, TAGS, CALCULATION, CITATION, CLASSIFICATION, INDUSTRYLIST
+)
+VALUES (
+    source.INDICATORID, source.AGGREGATE, source.COUNT, source.CREATED,
+    source.DESCRIPTION, source.ENDTIME, source.FREQUENCY, source.LASTMODIFIED,
+    source.NAME, source.SOURCE, source.SEASONALITY, source.STARTTIME,
+    source.TYPE, source.UNITS, source.NOTES, source.TAGS, source.CALCULATION,
+    source.CITATION, source.CLASSIFICATION, source.INDUSTRYLIST
+);
+
+CREATE OR REPLACE TASK refresh_indicator_timeseries
+    WAREHOUSE = DBT_STOCKPROJECT
+    SCHEDULE = 'USING CRON 0 6 * * * America/New_York'
+    --ERROR_INTEGRATION = dbtstockproject_notification
+AS
+MERGE INTO dbt_stockproject.public.industry_leading_indicators_timeseries AS target
+USING industrybased_economic_leading_indicators.public.industry_leading_indicators_timeseries AS source
+    ON target.INDICATORID = source.INDICATORID
+    AND target.DATE = source.DATE
+WHEN MATCHED THEN UPDATE SET
+    target.VALUE = source.VALUE
+WHEN NOT MATCHED THEN INSERT (INDICATORID, DATE, VALUE)
+VALUES (source.INDICATORID, source.DATE, source.VALUE);
+
+
+
+show tasks;
