@@ -6,4 +6,4 @@ DBTSTOCKPROJECT:
       role: DBT_ROLE
       warehouse: DBT_STOCKPROJECT
       database: DBT_STOCKPROJECT
-      schema: DBT_DEV_JDS_STAGING
+      schema: DBT_DEV

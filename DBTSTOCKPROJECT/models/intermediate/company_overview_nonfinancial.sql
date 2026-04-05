@@ -1,3 +1,5 @@
+{{ config(materialized='table') }}
+
 SELECT
 ticker,
 company_name,

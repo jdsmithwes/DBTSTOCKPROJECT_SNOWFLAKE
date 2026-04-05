@@ -1,3 +1,5 @@
+{{ config(materialized='table') }}
+
 SELECT
 ticker,
 market_capitalization,

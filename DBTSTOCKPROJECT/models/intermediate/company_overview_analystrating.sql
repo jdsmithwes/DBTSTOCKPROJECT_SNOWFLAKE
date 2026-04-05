@@ -1,3 +1,5 @@
+{{ config(materialized='table') }}
+
 SELECT
 ticker,
 analyst_target_price,
