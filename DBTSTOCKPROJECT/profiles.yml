@@ -4,6 +4,6 @@ DBTSTOCKPROJECT:
     dev:
       type: snowflake
       role: DBT_ROLE
-      warehouse: DASH_WH_SI
+      warehouse: DBT_STOCKPROJECT
       database: DBT_STOCKPROJECT
-      schema: DBT_DEV
+      schema: DBT_DEV_JDS_STAGING
