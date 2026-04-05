@@ -5,31 +5,25 @@ profile: "DBTSTOCKPROJECT"
 
 model-paths:
   - models
-
 analysis-paths:
   - analyses
-
 test-paths:
   - tests
-
 seed-paths:
   - seeds
-
 macro-paths:
   - macros
-
 snapshot-paths:
   - snapshots
 
 models:
   DBTSTOCKPROJECT:
-    +materialized: view
     staging:
       +materialized: view
-      +schema: staging
+      +schema: JDS_STAGING
     intermediate:
       +materialized: view
-      +schema: intermediate
+      +schema: JDS_INTERMEDIATE
     marts:
-      +materialized: view
-      +schema: marts
+      +materialized: table
+      +schema: JDS_MARTS
