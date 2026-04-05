@@ -7,7 +7,7 @@ with src as (
         metadata_filename,
         metadata_file_row_number,
         load_timestamp
-    from {{ source('public', 'RAW_COMPANY_OVERVIEW') }}
+    from {{ source('ALPHAVANTAGE_API', 'RAW_COMPANY_OVERVIEW') }}
 
 )
 

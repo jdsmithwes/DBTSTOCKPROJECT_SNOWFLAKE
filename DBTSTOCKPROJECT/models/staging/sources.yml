@@ -1,8 +1,14 @@
 version: 2
 sources:
-  - name: public
+  - name: ALPHAVANTAGE_API
     database: DBT_STOCKPROJECT
     schema: PUBLIC
     tables:
       - name: RAW_STOCK_DATA
       - name: RAW_COMPANY_OVERVIEW
+  - name: ECONOMIC_INDICATORS
+    database: INDUSTRYBASED_ECONOMIC_LEADING_INDICATORS
+    schema: PUBLIC
+    tables:
+      - name: INDUSTRY_LEADING_INDICATORS_METADATA
+      - name: INDUSTRY_LEADING_INDICATORS_TIMESERIES
