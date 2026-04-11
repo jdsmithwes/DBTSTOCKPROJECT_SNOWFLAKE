@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: stg_companyoverview
+    description: Staged company overview data from AlphaVantage API
+    tests:
+      - recency:
+          timestamp_column: load_timestamp
+          datepart: month
+          interval: 3
+
+  - name: stg_stockprice
+    description: Staged stock price data from AlphaVantage API
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - ticker
+            - date
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null
+      - name: open
+        tests:
+          - not_null
+      - name: close
+        tests:
+          - not_null

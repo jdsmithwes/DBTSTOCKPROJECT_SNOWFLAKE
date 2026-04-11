@@ -462,3 +462,5 @@ VALUES (source.INDICATORID, source.DATE, source.VALUE);
 
 
 show tasks;
+
+select max(date) from DBT_STOCKPROJECT.PUBLIC.RAW_STOCK_DATA;
