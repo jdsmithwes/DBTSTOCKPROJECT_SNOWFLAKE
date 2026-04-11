@@ -8,6 +8,8 @@ models:
           timestamp_column: load_timestamp
           datepart: month
           interval: 3
+      - min_row_count:
+          min_rows: 400
 
   - name: stg_stockprice
     description: Staged stock price data from AlphaVantage API
@@ -16,6 +18,8 @@ models:
           combination_of_columns:
             - ticker
             - date
+      - min_row_count:
+          min_rows: 400
     columns:
       - name: ticker
         tests:

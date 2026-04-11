@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: company_overview_analystrating
+    tests:
+      - min_row_count:
+          min_rows: 400
+
+  - name: company_overview_nonfinancial
+    tests:
+      - min_row_count:
+          min_rows: 400
+
+  - name: company_overview_valuation
+    tests:
+      - min_row_count:
+          min_rows: 400
+
+  - name: stock_performance_with_indicators
+    tests:
+      - min_row_count:
+          min_rows: 400

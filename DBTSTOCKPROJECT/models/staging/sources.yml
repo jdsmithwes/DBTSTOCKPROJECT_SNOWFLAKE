@@ -5,7 +5,13 @@ sources:
     schema: PUBLIC
     tables:
       - name: RAW_STOCK_DATA
+        tests:
+          - min_row_count:
+              min_rows: 400
       - name: RAW_COMPANY_OVERVIEW
+        tests:
+          - min_row_count:
+              min_rows: 400
   - name: ECONOMIC_INDICATORS
     database: INDUSTRYBASED_ECONOMIC_LEADING_INDICATORS
     schema: PUBLIC
