@@ -2,21 +2,376 @@ version: 2
 
 models:
   - name: company_overview_analystrating
+    description: Analyst rating counts and consensus target price per ticker
     tests:
       - min_row_count:
           min_rows: 400
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - not_empty_string
+      - name: analyst_target_price
+        description: Consensus analyst price target
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: analyst_rating_strong_buy
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_buy
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_hold
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_sell
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_strong_sell
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
 
   - name: company_overview_nonfinancial
+    description: Non-financial company attributes — sector, industry, geography
     tests:
       - min_row_count:
           min_rows: 400
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - not_empty_string
+      - name: company_name
+        description: Full legal company name
+        tests:
+          - not_null
+          - not_empty_string
+      - name: sector
+        description: GICS sector classification
+        tests:
+          - not_null
+          - not_empty_string
+      - name: industry
+        description: Industry sub-classification
+        tests:
+          - not_null
+          - not_empty_string
+      - name: country
+        description: Country of headquarters
+        tests:
+          - not_null
+          - not_empty_string
+      - name: currency
+        description: Trading currency
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['USD', 'CAD', 'EUR', 'GBP', 'HKD', 'JPY', 'AUD']
+              config:
+                severity: warn
+      - name: fiscal_year_end
+        description: Month in which the company's fiscal year ends
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['January', 'February', 'March', 'April', 'May', 'June',
+                       'July', 'August', 'September', 'October', 'November', 'December']
 
   - name: company_overview_valuation
+    description: Valuation multiples and capital structure metrics per ticker
     tests:
       - min_row_count:
           min_rows: 400
+      - column_gte_column:
+          column_a: shares_outstanding
+          column_b: shares_float
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - not_empty_string
+      - name: market_capitalization
+        description: Total market capitalization in USD
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: shares_outstanding
+        description: Total shares outstanding
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: shares_float
+        description: Publicly tradable float shares (must not exceed shares outstanding)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: diluted_eps_ttm
+        description: Diluted EPS on trailing twelve months
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1000
+              max_value: 10000
+              config:
+                severity: warn
+      - name: pe_ratio
+        description: Price-to-earnings ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -500
+              max_value: 5000
+              config:
+                severity: warn
+      - name: trailing_pe
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -500
+              max_value: 5000
+              config:
+                severity: warn
+      - name: forward_pe
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -500
+              max_value: 5000
+              config:
+                severity: warn
+      - name: peg_ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 100
+              config:
+                severity: warn
+      - name: price_to_book_ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -50
+              max_value: 500
+              config:
+                severity: warn
+      - name: revenue_ttm
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: ebitda
+        description: EBITDA; may be negative for unprofitable companies
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1000000000000
+              max_value: 1000000000000
+              config:
+                severity: warn
+      - name: ev_to_ebitda
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 1000
+              config:
+                severity: warn
+      - name: ev_to_revenue
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 500
+              config:
+                severity: warn
+      - name: beta
+        description: Market beta; 1.0 = moves in line with market
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 20
+              config:
+                severity: warn
 
   - name: stock_performance_with_indicators
+    description: >
+      Daily stock prices joined with company fundamentals and industry-level
+      economic leading indicators. Grain is ticker + date + indicator_name.
     tests:
       - min_row_count:
           min_rows: 400
+      - ohlc_integrity:
+          high_col: high
+          low_col: low
+          open_col: open
+          close_col: close
+      - no_future_date:
+          column_name: date
+      - no_weekend_date:
+          column_name: date
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - not_empty_string
+      - name: date
+        description: Trading date
+        tests:
+          - not_null
+      - name: open
+        description: Opening price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: high
+        description: Intraday high price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: low
+        description: Intraday low price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: close
+        description: Closing price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: adjusted_close
+        description: Closing price adjusted for splits and dividends
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: volume
+        description: Shares traded
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: company_name
+        description: Full legal company name
+        tests:
+          - not_null
+      - name: sector
+        description: GICS sector
+        tests:
+          - not_null
+      - name: exchange
+        tests:
+          - not_null
+      - name: beta
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 20
+              config:
+                severity: warn
+      - name: pe_ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -500
+              max_value: 5000
+              config:
+                severity: warn
+      - name: market_capitalization
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: percent_insiders
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: percent_institutions
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: indicator_value
+        description: Numeric value of the economic indicator on this date
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1000000
+              max_value: 1000000
+              config:
+                severity: warn
+
+  - name: industry_indicators_descriptions
+    description: >
+      Economic indicator metadata joined with time series values.
+      Grain is indicator name + date.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - name
+            - date
+      - min_row_count:
+          min_rows: 100
+      - no_future_date:
+          column_name: date
+    columns:
+      - name: name
+        description: Indicator name
+        tests:
+          - not_null
+          - not_empty_string
+      - name: classification
+        description: Leading, lagging, or coincident
+        tests:
+          - not_null
+          - not_empty_string
+      - name: units
+        description: Unit of measurement
+        tests:
+          - not_null
+      - name: industrylist
+        description: Comma-separated list of applicable industries
+        tests:
+          - not_null
+          - not_empty_string
+      - name: value
+        description: Observed indicator value
+        tests:
+          - not_null
+      - name: date
+        description: Observation date
+        tests:
+          - not_null
+
+  - name: int_industry_mapping
+    description: >
+      Cleaned mapping from company industry labels (AlphaVantage)
+      to indicator industry labels (economic data). Each company industry
+      maps to exactly one indicator industry.
+    tests:
+      - min_row_count:
+          min_rows: 1
+    columns:
+      - name: company_industry
+        description: Uppercased company industry label from AlphaVantage
+        tests:
+          - not_null
+          - unique
+          - not_empty_string
+      - name: indicator_industry
+        description: Corresponding indicator industry label
+        tests:
+          - not_null
+          - not_empty_string

@@ -1,20 +1,32 @@
 version: 2
+
 sources:
   - name: ALPHAVANTAGE_API
     database: DBT_STOCKPROJECT
     schema: PUBLIC
+    description: Raw stock market data ingested from AlphaVantage API
     tables:
       - name: RAW_STOCK_DATA
+        description: Raw daily OHLCV stock price records
         tests:
           - min_row_count:
               min_rows: 400
       - name: RAW_COMPANY_OVERVIEW
+        description: Raw company fundamentals payload (JSON) from AlphaVantage
+        freshness:
+          warn_after: {count: 60, period: day}
+          error_after: {count: 90, period: day}
+        loaded_at_field: load_timestamp
         tests:
           - min_row_count:
               min_rows: 400
+
   - name: ECONOMIC_INDICATORS
     database: INDUSTRYBASED_ECONOMIC_LEADING_INDICATORS
     schema: PUBLIC
+    description: Industry-level economic leading indicator data from Snowflake Marketplace
     tables:
       - name: INDUSTRY_LEADING_INDICATORS_METADATA
+        description: Descriptive metadata for each economic indicator
       - name: INDUSTRY_LEADING_INDICATORS_TIMESERIES
+        description: Time series observations for each economic indicator
