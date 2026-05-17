@@ -3,15 +3,17 @@ backfill_missing_dates.py
 ─────────────────────────
 Fully autonomous backfill pipeline. No manual dbt pre-run required.
 
+Ingestion path: S3 → COPY INTO (synchronous, bypasses Snowpipe/SNS entirely).
+
 Phases
 ──────
   1. DETECT  — Query RAW_STOCK_DATA for each ticker's last loaded date.
                Build expected NYSE trading days in Python (weekdays minus
                US market holidays). Compute gaps natively.
   2. FETCH   — Async AlphaVantage calls for every ticker × missing dates.
-  3. UPLOAD  — Push backfilled rows as CSV to S3 for Snowpipe ingestion.
-  4. WAIT    — Poll RAW_STOCK_DATA until Snowpipe loads the new rows
-               (or 5-minute timeout).
+  3. UPLOAD  — Push backfilled rows as CSV to S3.
+  4. LOAD    — COPY INTO RAW_STOCK_DATA from the Snowflake S3 stage
+               (synchronous — no SNS/Snowpipe polling required).
   5. REFRESH — Run `dbt run` to rebuild all downstream models.
 
 Required environment variables
@@ -26,7 +28,7 @@ Required environment variables
   AWS_ACCESS_KEY_ID
   AWS_SECRET_ACCESS_KEY
   AWS_REGION              default: us-east-1
-  S3_BUCKET_NAME          the bucket Snowpipe watches
+  S3_BUCKET_NAME          the bucket the Snowflake stage points to
   S3_PREFIX               default: stock_prices/
 
 Optional overrides
@@ -34,15 +36,13 @@ Optional overrides
   DBT_EXECUTABLE          default: /Users/jamaalsmith/dbtenv/bin/dbt
   DBT_PROJECT_DIR         default: directory of this script's parent/DBTSTOCKPROJECT
   DBT_PROFILES_DIR        default: ~/.dbt
-  SNOWPIPE_POLL_INTERVAL  seconds between Snowpipe checks (default: 30)
-  SNOWPIPE_POLL_TIMEOUT   max seconds to wait for Snowpipe (default: 300)
+  SNOWFLAKE_STAGE         fully-qualified stage name (default below)
 """
 
 import asyncio
 import logging
 import os
 import subprocess
-import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -97,8 +97,12 @@ DBT_PROJECT_DIR  = os.environ.get(
 )
 DBT_PROFILES_DIR = os.environ.get("DBT_PROFILES_DIR", str(Path.home() / ".dbt"))
 
-SNOWPIPE_POLL_INTERVAL = int(os.environ.get("SNOWPIPE_POLL_INTERVAL", "30"))
-SNOWPIPE_POLL_TIMEOUT  = int(os.environ.get("SNOWPIPE_POLL_TIMEOUT", "300"))
+# Fully-qualified Snowflake stage that maps to the S3_BUCKET_NAME/S3_PREFIX location.
+# DBT_ROLE must have USAGE + READ on this stage (grants already applied).
+SNOWFLAKE_STAGE = os.environ.get(
+    "SNOWFLAKE_STAGE",
+    "DBT_STOCKPROJECT.PUBLIC.S3_DBTSTOCKPROJECT_STAGE_STOCKPRICES",
+)
 
 MAX_CONCURRENT_REQUESTS = 5
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=60)
@@ -347,26 +351,11 @@ async def _fetch_all(gaps: dict[date, list[str]]) -> pd.DataFrame:
 # ──────────────────────────────────────────────
 # PHASE 3 — UPLOAD TO S3
 # ──────────────────────────────────────────────
-def upload_to_s3(df: pd.DataFrame) -> tuple[int, list[str], list[str]]:
+def upload_to_s3(df: pd.DataFrame) -> str:
     """
-    Captures the pre-upload row count, uploads backfilled rows as CSV to S3,
-    and returns (pre_upload_count, sample_tickers, sample_dates) for polling.
-
-    RAW_STOCK_DATA has no load-timestamp column, so we poll by comparing the
-    total row count before vs. after Snowpipe ingestion.
+    Uploads backfilled rows as CSV to S3 and returns the s3_key
+    (e.g. 'stock_prices/backfill_20260517_123456.csv').
     """
-    conn = _snowflake_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            f"SELECT COUNT(*) FROM {SNOWFLAKE_DATABASE}.PUBLIC.RAW_STOCK_DATA"
-        )
-        (pre_count,) = cur.fetchone()
-    finally:
-        conn.close()
-
-    log.info(f"   Row count before upload: {pre_count:,}")
-
     s3 = boto3.client(
         "s3",
         region_name=AWS_REGION,
@@ -391,83 +380,79 @@ def upload_to_s3(df: pd.DataFrame) -> tuple[int, list[str], list[str]]:
         f"({df['ticker'].nunique()} tickers, {df['date'].nunique()} dates) "
         f"→ s3://{S3_BUCKET_NAME}/{s3_key}"
     )
-
-    sample_tickers = df["ticker"].unique()[:5].tolist()
-    sample_dates   = df["date"].unique()[:3].tolist()
-    return pre_count, sample_tickers, sample_dates
+    return s3_key
 
 
 # ──────────────────────────────────────────────
-# PHASE 4 — WAIT FOR SNOWPIPE
+# PHASE 4 — COPY INTO FROM S3 STAGE
 # ──────────────────────────────────────────────
-def wait_for_snowpipe(pre_count: int, sample_tickers: list[str], sample_dates: list[str]) -> bool:
+def load_via_copy_into(s3_key: str) -> int:
     """
-    Polls RAW_STOCK_DATA until its row count exceeds pre_count
-    (confirming Snowpipe loaded the new file), or SNOWPIPE_POLL_TIMEOUT elapses.
+    Loads the uploaded CSV directly into RAW_STOCK_DATA using COPY INTO from
+    the Snowflake external stage. Synchronous — no Snowpipe/SNS polling needed.
 
-    Returns True if new rows were detected, False on timeout.
+    The stage URL already includes the S3_PREFIX path, so FILES only needs the
+    bare filename (the part after the last '/').
+
+    Returns the number of rows loaded.
     """
-    log.info(
-        f"Phase 4: waiting for Snowpipe (checking every {SNOWPIPE_POLL_INTERVAL}s, "
-        f"timeout {SNOWPIPE_POLL_TIMEOUT}s) …"
-    )
-    log.info(f"   Watching for row count to exceed {pre_count:,}")
+    filename = s3_key.split("/")[-1]
+    log.info(f"Phase 4: running COPY INTO from stage file '{filename}' …")
 
-    deadline = time.monotonic() + SNOWPIPE_POLL_TIMEOUT
+    copy_sql = f"""
+        COPY INTO {SNOWFLAKE_DATABASE}.PUBLIC.RAW_STOCK_DATA
+        FROM @{SNOWFLAKE_STAGE}
+        FILES = ('{filename}')
+        FILE_FORMAT = (
+            TYPE = 'CSV'
+            SKIP_HEADER = 1
+            FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+            EMPTY_FIELD_AS_NULL = TRUE
+        )
+        ON_ERROR = CONTINUE
+    """
 
     conn = _snowflake_conn()
     try:
         cur = conn.cursor()
-        while time.monotonic() < deadline:
-            cur.execute(
-                f"SELECT COUNT(*) FROM {SNOWFLAKE_DATABASE}.PUBLIC.RAW_STOCK_DATA"
-            )
-            (current_count,) = cur.fetchone()
-            new_rows = current_count - pre_count
-            if new_rows > 0:
-                log.info(f"✅ Snowpipe loaded {new_rows:,} new row(s) — proceeding.")
-                return True
-
-            remaining = int(deadline - time.monotonic())
-            log.info(
-                f"   Still waiting … count still {current_count:,} "
-                f"({remaining}s remaining)"
-            )
-            time.sleep(SNOWPIPE_POLL_INTERVAL)
+        cur.execute(copy_sql)
+        rows = cur.fetchall()
+        # COPY INTO result columns (0-indexed):
+        # 0: file, 1: status, 2: rows_parsed, 3: rows_loaded,
+        # 4: error_limit, 5: errors_seen, 6: first_error, …
+        total_loaded = sum(r[3] for r in rows if r[1] == "LOADED")
+        total_errors = sum(r[5] for r in rows)
+        log.info(f"✅ COPY INTO complete — {total_loaded:,} rows loaded, {total_errors} parse errors.")
+        if total_errors:
+            log.warning("   Some rows were skipped due to parse errors (ON_ERROR=CONTINUE).")
+        return total_loaded
     finally:
         conn.close()
-
-    log.warning(
-        f"⏱️  Snowpipe timeout after {SNOWPIPE_POLL_TIMEOUT}s. "
-        "Proceeding with dbt run anyway — data may not be complete."
-    )
-    return False
 
 
 # ──────────────────────────────────────────────
 # PHASE 5 — REFRESH DBT MODELS
 # ──────────────────────────────────────────────
-def run_dbt() -> None:
-    """Runs `dbt run` using the project's virtual-env dbt binary."""
-    log.info("Phase 5: running dbt run …")
+def _run_dbt_command(subcommand: str) -> None:
     cmd = [
         DBT_EXECUTABLE,
-        "run",
+        subcommand,
         "--profiles-dir", DBT_PROFILES_DIR,
         "--project-dir",  DBT_PROJECT_DIR,
     ]
-    log.info(f"   Command: {' '.join(cmd)}")
-
+    log.info(f"   Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=False, text=True)
-
-    if result.returncode == 0:
-        log.info("✅ dbt run completed successfully.")
-    else:
-        log.error(
-            f"❌ dbt run failed with exit code {result.returncode}. "
-            "Check the output above for model errors."
-        )
+    if result.returncode != 0:
+        log.error(f"❌ dbt {subcommand} failed with exit code {result.returncode}.")
         raise SystemExit(result.returncode)
+    log.info(f"✅ dbt {subcommand} completed successfully.")
+
+
+def run_dbt() -> None:
+    """Runs `dbt seed` then `dbt run` using the project's virtual-env dbt binary."""
+    log.info("Phase 5: running dbt seed + dbt run …")
+    _run_dbt_command("seed")
+    _run_dbt_command("run")
 
 
 # ──────────────────────────────────────────────
@@ -491,10 +476,10 @@ async def main() -> None:
 
     # Phase 3 — upload
     log.info("Phase 3: uploading to S3 …")
-    pre_count, sample_tickers, sample_dates = upload_to_s3(df)
+    s3_key = upload_to_s3(df)
 
-    # Phase 4 — wait
-    wait_for_snowpipe(pre_count, sample_tickers, sample_dates)
+    # Phase 4 — load synchronously via COPY INTO
+    load_via_copy_into(s3_key)
 
     # Phase 5 — refresh
     run_dbt()
