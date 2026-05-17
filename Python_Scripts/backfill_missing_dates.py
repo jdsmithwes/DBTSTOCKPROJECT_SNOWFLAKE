@@ -47,11 +47,18 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import ssl
+
 import aiohttp
 import boto3
+import certifi
 import pandas as pd
 import snowflake.connector
 from tenacity import retry, stop_after_attempt, wait_fixed
+
+# macOS Python 3.11 doesn't trust the system CA bundle by default;
+# certifi provides a known-good bundle so HTTPS to AlphaVantage works.
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 # ──────────────────────────────────────────────
 # LOGGING
@@ -95,6 +102,11 @@ SNOWPIPE_POLL_TIMEOUT  = int(os.environ.get("SNOWPIPE_POLL_TIMEOUT", "300"))
 
 MAX_CONCURRENT_REQUESTS = 5
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=60)
+# AlphaVantage $50/month plan: 75 req/min = 1.25 req/sec.
+# We throttle to ~1 req/sec (60/min) to stay safely under the cap.
+# With 5 concurrent slots, each slot sleeps 4s after its request finishes,
+# yielding 5 active slots / 4.5s cycle ≈ 1.1 req/sec across the pool.
+ALPHAVANTAGE_REQUEST_DELAY = float(os.environ.get("ALPHAVANTAGE_REQUEST_DELAY", "4.0"))
 
 # ──────────────────────────────────────────────
 # NYSE MARKET HOLIDAYS  (mirrors seeds/us_market_holidays.csv)
@@ -250,7 +262,15 @@ async def _fetch_ticker(
         payload = await resp.json(content_type=None)
 
         if "Time Series (Daily)" not in payload:
-            log.warning(f"⚠️  No daily data returned for {ticker} — skipping")
+            # Surface the API message so we can distinguish rate-limit
+            # responses from genuinely delisted / unsupported symbols.
+            api_msg = (
+                payload.get("Note")
+                or payload.get("Information")
+                or payload.get("Error Message")
+                or str(list(payload.keys()))
+            )
+            log.warning(f"⚠️  No data for {ticker} — API says: {api_msg[:120]}")
             return None
 
         records = []
@@ -290,22 +310,35 @@ async def _fetch_all(gaps: dict[date, list[str]]) -> pd.DataFrame:
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
     frames    = []
 
-    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
+    connector = aiohttp.TCPConnector(ssl=_SSL_CONTEXT)
+    async with aiohttp.ClientSession(connector=connector, timeout=REQUEST_TIMEOUT) as session:
 
         async def bounded(ticker: str, dates: set[date]):
             async with semaphore:
-                return await _fetch_ticker(session, ticker, dates)
+                result = await _fetch_ticker(session, ticker, dates)
+                # Throttle to stay under the AlphaVantage rate limit.
+                # Each slot sleeps after its request so the pool collectively
+                # sends ≈ MAX_CONCURRENT / (latency + delay) requests/sec.
+                await asyncio.sleep(ALPHAVANTAGE_REQUEST_DELAY)
+                return result
 
         tasks = [bounded(t, d) for t, d in ticker_to_dates.items()]
 
+        total   = len(tasks)
         success, skipped = 0, 0
         for coro in asyncio.as_completed(tasks):
             result = await coro
+            done   = success + skipped + 1
             if result is None:
                 skipped += 1
             else:
                 frames.append(result)
                 success += 1
+            if done % 25 == 0 or done == total:
+                log.info(
+                    f"   Progress: {done}/{total} tickers processed "
+                    f"({success} success, {skipped} skipped)"
+                )
 
     log.info(f"📊 Fetch summary — success: {success}, skipped: {skipped}")
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
@@ -314,11 +347,26 @@ async def _fetch_all(gaps: dict[date, list[str]]) -> pd.DataFrame:
 # ──────────────────────────────────────────────
 # PHASE 3 — UPLOAD TO S3
 # ──────────────────────────────────────────────
-def upload_to_s3(df: pd.DataFrame) -> datetime:
+def upload_to_s3(df: pd.DataFrame) -> tuple[int, list[str], list[str]]:
     """
-    Uploads backfilled rows as CSV to S3 under S3_PREFIX.
-    Returns the UTC timestamp just before upload (used for Snowpipe polling).
+    Captures the pre-upload row count, uploads backfilled rows as CSV to S3,
+    and returns (pre_upload_count, sample_tickers, sample_dates) for polling.
+
+    RAW_STOCK_DATA has no load-timestamp column, so we poll by comparing the
+    total row count before vs. after Snowpipe ingestion.
     """
+    conn = _snowflake_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT COUNT(*) FROM {SNOWFLAKE_DATABASE}.PUBLIC.RAW_STOCK_DATA"
+        )
+        (pre_count,) = cur.fetchone()
+    finally:
+        conn.close()
+
+    log.info(f"   Row count before upload: {pre_count:,}")
+
     s3 = boto3.client(
         "s3",
         region_name=AWS_REGION,
@@ -326,11 +374,16 @@ def upload_to_s3(df: pd.DataFrame) -> datetime:
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
     )
 
-    upload_time   = datetime.utcnow()
-    run_timestamp = upload_time.strftime("%Y%m%d_%H%M%S")
+    run_timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     s3_key        = f"{S3_PREFIX}backfill_{run_timestamp}.csv"
 
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    # RAW_STOCK_DATA schema: DATE, OPEN, HIGH, LOW, CLOSE, ADJUSTED_CLOSE,
+    # VOLUME, DIVIDEND_AMOUNT, SPLIT_COEFFICIENT, TICKER  (no load_time column)
+    upload_cols = [
+        "date", "open", "high", "low", "close",
+        "adjusted_close", "volume", "dividend_amount", "split_coefficient", "ticker",
+    ]
+    csv_bytes = df[upload_cols].to_csv(index=False).encode("utf-8")
     s3.put_object(Bucket=S3_BUCKET_NAME, Key=s3_key, Body=csv_bytes)
 
     log.info(
@@ -338,43 +391,46 @@ def upload_to_s3(df: pd.DataFrame) -> datetime:
         f"({df['ticker'].nunique()} tickers, {df['date'].nunique()} dates) "
         f"→ s3://{S3_BUCKET_NAME}/{s3_key}"
     )
-    return upload_time
+
+    sample_tickers = df["ticker"].unique()[:5].tolist()
+    sample_dates   = df["date"].unique()[:3].tolist()
+    return pre_count, sample_tickers, sample_dates
 
 
 # ──────────────────────────────────────────────
 # PHASE 4 — WAIT FOR SNOWPIPE
 # ──────────────────────────────────────────────
-def wait_for_snowpipe(upload_time: datetime) -> bool:
+def wait_for_snowpipe(pre_count: int, sample_tickers: list[str], sample_dates: list[str]) -> bool:
     """
-    Polls RAW_STOCK_DATA every SNOWPIPE_POLL_INTERVAL seconds until new rows
-    with LOAD_TIME > upload_time appear, or SNOWPIPE_POLL_TIMEOUT seconds elapse.
+    Polls RAW_STOCK_DATA until its row count exceeds pre_count
+    (confirming Snowpipe loaded the new file), or SNOWPIPE_POLL_TIMEOUT elapses.
 
-    Returns True if rows were detected, False on timeout.
+    Returns True if new rows were detected, False on timeout.
     """
     log.info(
         f"Phase 4: waiting for Snowpipe (checking every {SNOWPIPE_POLL_INTERVAL}s, "
         f"timeout {SNOWPIPE_POLL_TIMEOUT}s) …"
     )
-    upload_ts = upload_time.strftime("%Y-%m-%d %H:%M:%S")
-    deadline  = time.monotonic() + SNOWPIPE_POLL_TIMEOUT
+    log.info(f"   Watching for row count to exceed {pre_count:,}")
+
+    deadline = time.monotonic() + SNOWPIPE_POLL_TIMEOUT
 
     conn = _snowflake_conn()
     try:
         cur = conn.cursor()
         while time.monotonic() < deadline:
-            cur.execute(f"""
-                SELECT COUNT(*)
-                FROM {SNOWFLAKE_DATABASE}.PUBLIC.RAW_STOCK_DATA
-                WHERE load_time > '{upload_ts}'
-            """)
-            (count,) = cur.fetchone()
-            if count and count > 0:
-                log.info(f"✅ Snowpipe loaded {count} new row(s) — proceeding.")
+            cur.execute(
+                f"SELECT COUNT(*) FROM {SNOWFLAKE_DATABASE}.PUBLIC.RAW_STOCK_DATA"
+            )
+            (current_count,) = cur.fetchone()
+            new_rows = current_count - pre_count
+            if new_rows > 0:
+                log.info(f"✅ Snowpipe loaded {new_rows:,} new row(s) — proceeding.")
                 return True
 
             remaining = int(deadline - time.monotonic())
             log.info(
-                f"   Still waiting … 0 new rows so far "
+                f"   Still waiting … count still {current_count:,} "
                 f"({remaining}s remaining)"
             )
             time.sleep(SNOWPIPE_POLL_INTERVAL)
@@ -435,10 +491,10 @@ async def main() -> None:
 
     # Phase 3 — upload
     log.info("Phase 3: uploading to S3 …")
-    upload_time = upload_to_s3(df)
+    pre_count, sample_tickers, sample_dates = upload_to_s3(df)
 
     # Phase 4 — wait
-    wait_for_snowpipe(upload_time)
+    wait_for_snowpipe(pre_count, sample_tickers, sample_dates)
 
     # Phase 5 — refresh
     run_dbt()
