@@ -1,4 +1,8 @@
-{{ config(materialized='table') }}
+{{ config(
+    materialized='table',
+    table_format='iceberg',
+    storage_serialization_policy='COMPATIBLE'
+) }}
 
 -- Identifies missing trading days per ticker between each ticker's last loaded
 -- date and the most recent completed trading day.

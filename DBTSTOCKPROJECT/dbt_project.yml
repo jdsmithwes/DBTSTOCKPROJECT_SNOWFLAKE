@@ -27,3 +27,5 @@ models:
     marts:
       +materialized: table
       +schema: JDS_MARTS
+      +table_format: iceberg
+      +storage_serialization_policy: COMPATIBLE

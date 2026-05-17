@@ -1,4 +1,8 @@
-{{ config(materialized='table') }}
+{{ config(
+    materialized='table',
+    table_format='iceberg',
+    storage_serialization_policy='COMPATIBLE'
+) }}
 
 -- ML training and inference table. Grain: one row per (ticker, date).
 -- Filter to dataset_split = 'training' for model training.

@@ -1,9 +1,0 @@
-dbt_stockproject:
-  target: dev
-  outputs:
-    dev:
-      type: snowflake
-      role: DBT_ROLE
-      warehouse: DBT_STOCKPROJECT
-      database: DBT_STOCKPROJECT
-      schema: DBT_DEV
