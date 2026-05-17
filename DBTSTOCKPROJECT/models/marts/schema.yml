@@ -1,6 +1,39 @@
 version: 2
 
 models:
+  - name: mart_data_gaps
+    description: >
+      Missing trading days per ticker between each ticker's last loaded date
+      and the most recent completed trading day. One row per (ticker, missing_date).
+
+      This is the operational table read by Python_Scripts/backfill_missing_dates.py
+      to determine which dates need to be fetched from AlphaVantage and uploaded
+      to S3 for Snowpipe ingestion. Run this model before running the backfill script.
+
+      Workflow:
+        1. dbt run --select mart_data_gaps
+        2. python Python_Scripts/backfill_missing_dates.py
+        3. Wait for Snowpipe to load new rows into RAW_STOCK_DATA
+        4. dbt run  (refresh all downstream models)
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, missing_date]
+    columns:
+      - name: ticker
+        description: Stock ticker symbol with missing data
+        tests:
+          - not_null
+      - name: missing_date
+        description: Expected trading day not present in stg_stockprice for this ticker
+        tests:
+          - not_null
+      - name: last_loaded_date
+        description: The most recent date that IS present for this ticker
+      - name: overall_last_date
+        description: The most recent loaded date across all tickers in the database
+      - name: days_since_last_load
+        description: Calendar days between last_loaded_date and today; useful for alerting on stale data
+
   - name: mart_ml_features
     description: >
       ML training and inference table. Grain: one row per (ticker, date).

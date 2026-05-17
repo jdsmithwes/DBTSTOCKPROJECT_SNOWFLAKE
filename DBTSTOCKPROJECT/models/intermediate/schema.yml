@@ -376,6 +376,22 @@ models:
           - not_null
           - not_empty_string
 
+  - name: int_trading_calendar
+    description: >
+      Every expected NYSE trading day from 2020-01-01 through the most recent
+      completed trading day (yesterday, or last Friday if today is Monday).
+      Weekends and US market holidays (seed: us_market_holidays) are excluded.
+      Used as the date spine in mart_data_gaps.
+    tests:
+      - min_row_count:
+          min_rows: 1000
+    columns:
+      - name: trading_date
+        description: A valid NYSE trading day
+        tests:
+          - not_null
+          - unique
+
   - name: int_stock_price_features
     description: >
       Daily price-derived features for each ticker at (ticker, date) grain.
