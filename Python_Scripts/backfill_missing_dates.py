@@ -1,37 +1,51 @@
 """
 backfill_missing_dates.py
 ─────────────────────────
-Reads mart_data_gaps from Snowflake to find every (ticker, date) pair that is
-missing from the price database, fetches the data from AlphaVantage, and
-uploads it to S3 so Snowpipe can load it into RAW_STOCK_DATA.
+Fully autonomous backfill pipeline. No manual dbt pre-run required.
 
-Run order:
-  1. dbt run --select mart_data_gaps   (refresh the gap table first)
-  2. python Python_Scripts/backfill_missing_dates.py
-  3. Wait ~2-5 min for Snowpipe to ingest
-  4. dbt run                            (refresh all downstream models)
+Phases
+──────
+  1. DETECT  — Query RAW_STOCK_DATA for each ticker's last loaded date.
+               Build expected NYSE trading days in Python (weekdays minus
+               US market holidays). Compute gaps natively.
+  2. FETCH   — Async AlphaVantage calls for every ticker × missing dates.
+  3. UPLOAD  — Push backfilled rows as CSV to S3 for Snowpipe ingestion.
+  4. WAIT    — Poll RAW_STOCK_DATA until Snowpipe loads the new rows
+               (or 5-minute timeout).
+  5. REFRESH — Run `dbt run` to rebuild all downstream models.
 
-Required environment variables:
+Required environment variables
+───────────────────────────────
   SNOWFLAKE_ACCOUNT       e.g. TPRFGUJ-JNC76647
   SNOWFLAKE_USER          e.g. jdsmithwes
-  SNOWFLAKE_PASSWORD      your Snowflake password or PAT
+  SNOWFLAKE_PASSWORD      Snowflake password or PAT
   SNOWFLAKE_ROLE          e.g. DBT_ROLE
   SNOWFLAKE_WAREHOUSE     e.g. DBT_STOCKPROJECT
   SNOWFLAKE_DATABASE      e.g. DBT_STOCKPROJECT
-  SNOWFLAKE_SCHEMA        e.g. JDS_MARTS
   ALPHAVANTAGE_API_KEY    your AlphaVantage API key
   AWS_ACCESS_KEY_ID
   AWS_SECRET_ACCESS_KEY
   AWS_REGION              default: us-east-1
   S3_BUCKET_NAME          the bucket Snowpipe watches
   S3_PREFIX               default: stock_prices/
+
+Optional overrides
+──────────────────
+  DBT_EXECUTABLE          default: /Users/jamaalsmith/dbtenv/bin/dbt
+  DBT_PROJECT_DIR         default: directory of this script's parent/DBTSTOCKPROJECT
+  DBT_PROFILES_DIR        default: ~/.dbt
+  SNOWPIPE_POLL_INTERVAL  seconds between Snowpipe checks (default: 30)
+  SNOWPIPE_POLL_TIMEOUT   max seconds to wait for Snowpipe (default: 300)
 """
 
-import os
 import asyncio
 import logging
+import os
+import subprocess
+import time
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import aiohttp
 import boto3
@@ -57,7 +71,6 @@ SNOWFLAKE_PASSWORD  = os.environ["SNOWFLAKE_PASSWORD"]
 SNOWFLAKE_ROLE      = os.environ["SNOWFLAKE_ROLE"]
 SNOWFLAKE_WAREHOUSE = os.environ["SNOWFLAKE_WAREHOUSE"]
 SNOWFLAKE_DATABASE  = os.environ["SNOWFLAKE_DATABASE"]
-SNOWFLAKE_SCHEMA    = os.environ.get("SNOWFLAKE_SCHEMA", "JDS_MARTS")
 
 ALPHAVANTAGE_API_KEY = os.environ["ALPHAVANTAGE_API_KEY"]
 ALPHAVANTAGE_URL     = "https://www.alphavantage.co/query"
@@ -68,79 +81,166 @@ AWS_REGION            = os.environ.get("AWS_REGION", "us-east-1")
 S3_BUCKET_NAME        = os.environ["S3_BUCKET_NAME"]
 S3_PREFIX             = os.environ.get("S3_PREFIX", "stock_prices/")
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+DBT_EXECUTABLE   = os.environ.get(
+    "DBT_EXECUTABLE", "/Users/jamaalsmith/dbtenv/bin/dbt"
+)
+DBT_PROJECT_DIR  = os.environ.get(
+    "DBT_PROJECT_DIR", str(_SCRIPT_DIR.parent / "DBTSTOCKPROJECT")
+)
+DBT_PROFILES_DIR = os.environ.get("DBT_PROFILES_DIR", str(Path.home() / ".dbt"))
+
+SNOWPIPE_POLL_INTERVAL = int(os.environ.get("SNOWPIPE_POLL_INTERVAL", "30"))
+SNOWPIPE_POLL_TIMEOUT  = int(os.environ.get("SNOWPIPE_POLL_TIMEOUT", "300"))
+
 MAX_CONCURRENT_REQUESTS = 5
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=60)
 
 # ──────────────────────────────────────────────
-# STEP 1 — QUERY SNOWFLAKE FOR MISSING DATES
+# NYSE MARKET HOLIDAYS  (mirrors seeds/us_market_holidays.csv)
 # ──────────────────────────────────────────────
-def fetch_missing_dates() -> dict[date, list[str]]:
-    """
-    Returns a dict mapping each missing trading date to the list of tickers
-    that need data on that date.
+_NYSE_HOLIDAYS: set[date] = {
+    date.fromisoformat(d) for d in [
+        # 2020
+        "2020-01-01", "2020-01-20", "2020-02-17", "2020-04-10",
+        "2020-05-25", "2020-07-03", "2020-09-07", "2020-11-26", "2020-12-25",
+        # 2021
+        "2021-01-01", "2021-01-18", "2021-02-15", "2021-04-02",
+        "2021-05-31", "2021-07-05", "2021-09-06", "2021-11-25",
+        "2021-12-24", "2021-12-31",
+        # 2022
+        "2022-01-17", "2022-02-21", "2022-04-15", "2022-05-30",
+        "2022-06-20", "2022-07-04", "2022-09-05", "2022-11-24", "2022-12-26",
+        # 2023
+        "2023-01-02", "2023-01-16", "2023-02-20", "2023-04-07",
+        "2023-05-29", "2023-06-19", "2023-07-04", "2023-09-04",
+        "2023-11-23", "2023-12-25",
+        # 2024
+        "2024-01-01", "2024-01-15", "2024-02-19", "2024-03-29",
+        "2024-05-27", "2024-06-19", "2024-07-04", "2024-09-02",
+        "2024-11-28", "2024-12-25",
+        # 2025
+        "2025-01-01", "2025-01-09", "2025-01-20", "2025-02-17",
+        "2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04",
+        "2025-09-01", "2025-11-27", "2025-12-25",
+        # 2026
+        "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
+        "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07",
+        "2026-11-26", "2026-12-25",
+    ]
+}
 
-    Reads from MART_DATA_GAPS — run `dbt run --select mart_data_gaps` first.
-    """
-    log.info("Connecting to Snowflake to read mart_data_gaps …")
 
-    conn = snowflake.connector.connect(
+def _last_completed_trading_day() -> date:
+    """
+    Returns the most recent trading day that has fully closed —
+    yesterday (or last Friday if today is Monday, adjusting for holidays).
+    """
+    candidate = date.today() - timedelta(days=1)
+    while candidate.weekday() >= 5 or candidate in _NYSE_HOLIDAYS:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def _trading_days_between(start: date, end: date) -> list[date]:
+    """All NYSE trading days in (start, end] — exclusive start, inclusive end."""
+    result = []
+    current = start + timedelta(days=1)
+    while current <= end:
+        if current.weekday() < 5 and current not in _NYSE_HOLIDAYS:
+            result.append(current)
+        current += timedelta(days=1)
+    return result
+
+
+# ──────────────────────────────────────────────
+# SNOWFLAKE CONNECTION HELPER
+# ──────────────────────────────────────────────
+def _snowflake_conn():
+    return snowflake.connector.connect(
         account=SNOWFLAKE_ACCOUNT,
         user=SNOWFLAKE_USER,
         password=SNOWFLAKE_PASSWORD,
         role=SNOWFLAKE_ROLE,
         warehouse=SNOWFLAKE_WAREHOUSE,
         database=SNOWFLAKE_DATABASE,
-        schema=SNOWFLAKE_SCHEMA,
     )
 
+
+# ──────────────────────────────────────────────
+# PHASE 1 — DETECT GAPS NATIVELY
+# ──────────────────────────────────────────────
+def detect_gaps() -> dict[date, list[str]]:
+    """
+    Queries RAW_STOCK_DATA directly for the latest loaded date per ticker.
+    Computes missing NYSE trading days in Python — no dbt pre-run required.
+
+    Returns dict mapping each missing trading date → list of tickers that
+    need data on that date.
+    """
+    log.info("Phase 1: detecting gaps in RAW_STOCK_DATA …")
+
+    conn = _snowflake_conn()
     try:
         cur = conn.cursor()
         cur.execute(f"""
-            SELECT ticker, missing_date
-            FROM {SNOWFLAKE_DATABASE}.{SNOWFLAKE_SCHEMA}.JDS_MART_mart_data_gaps
-            ORDER BY missing_date, ticker
+            SELECT ticker, MAX(date)::date AS last_date
+            FROM {SNOWFLAKE_DATABASE}.PUBLIC.RAW_STOCK_DATA
+            GROUP BY ticker
         """)
         rows = cur.fetchall()
     finally:
         conn.close()
 
     if not rows:
-        log.info("✅ No missing dates found — database is up to date.")
+        log.warning("RAW_STOCK_DATA is empty — nothing to backfill against.")
         return {}
 
-    # Group tickers by missing date
+    last_trading_day = _last_completed_trading_day()
+    log.info(f"Last completed trading day: {last_trading_day}")
+
     gaps: dict[date, list[str]] = defaultdict(list)
-    for ticker, missing_date in rows:
-        gaps[missing_date].append(ticker)
+    for ticker, last_date in rows:
+        if isinstance(last_date, str):
+            last_date = date.fromisoformat(last_date)
+        if last_date >= last_trading_day:
+            continue
+        for missing in _trading_days_between(last_date, last_trading_day):
+            gaps[missing].append(ticker)
+
+    if not gaps:
+        log.info("✅ No missing dates — all tickers are up to date.")
+        return {}
 
     unique_dates   = len(gaps)
     unique_tickers = len({t for tickers in gaps.values() for t in tickers})
+    total_pairs    = sum(len(v) for v in gaps.values())
     log.info(
-        f"📋 Found {len(rows)} missing (ticker, date) pairs "
+        f"📋 Found {total_pairs} missing (ticker, date) pairs "
         f"across {unique_dates} dates and {unique_tickers} tickers."
     )
+    log.info(f"📅 Gap window: {min(gaps)} → {max(gaps)}")
 
     return dict(gaps)
 
 
 # ──────────────────────────────────────────────
-# STEP 2 — FETCH FROM ALPHAVANTAGE
+# PHASE 2 — FETCH FROM ALPHAVANTAGE
 # ──────────────────────────────────────────────
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
-async def fetch_ticker(session: aiohttp.ClientSession, ticker: str, missing_dates: set[date]):
-    """
-    Calls AlphaVantage TIME_SERIES_DAILY_ADJUSTED for one ticker and returns
-    only the rows whose dates are in missing_dates.
-    Uses compact (100-day) output when the gap is ≤90 days, full otherwise.
-    """
-    days_gap = (max(missing_dates) - min(missing_dates)).days
+async def _fetch_ticker(
+    session: aiohttp.ClientSession,
+    ticker: str,
+    missing_dates: set[date],
+) -> pd.DataFrame | None:
+    days_gap  = (max(missing_dates) - min(missing_dates)).days
     outputsize = "compact" if days_gap <= 90 else "full"
 
     params = {
-        "function": "TIME_SERIES_DAILY_ADJUSTED",
-        "symbol":   ticker,
+        "function":   "TIME_SERIES_DAILY_ADJUSTED",
+        "symbol":     ticker,
         "outputsize": outputsize,
-        "apikey":   ALPHAVANTAGE_API_KEY,
+        "apikey":     ALPHAVANTAGE_API_KEY,
     }
 
     async with session.get(ALPHAVANTAGE_URL, params=params) as resp:
@@ -158,19 +258,18 @@ async def fetch_ticker(session: aiohttp.ClientSession, ticker: str, missing_date
             trading_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             if trading_date not in missing_dates:
                 continue
-
             records.append({
-                "ticker":           ticker,
-                "date":             date_str,
-                "open":             values.get("1. open"),
-                "high":             values.get("2. high"),
-                "low":              values.get("3. low"),
-                "close":            values.get("4. close"),
-                "adjusted_close":   values.get("5. adjusted close"),
-                "volume":           values.get("6. volume"),
-                "dividend_amount":  values.get("7. dividend amount"),
-                "split_coefficient":values.get("8. split coefficient"),
-                "load_time":        datetime.utcnow().isoformat(),
+                "ticker":            ticker,
+                "date":              date_str,
+                "open":              values.get("1. open"),
+                "high":              values.get("2. high"),
+                "low":               values.get("3. low"),
+                "close":             values.get("4. close"),
+                "adjusted_close":    values.get("5. adjusted close"),
+                "volume":            values.get("6. volume"),
+                "dividend_amount":   values.get("7. dividend amount"),
+                "split_coefficient": values.get("8. split coefficient"),
+                "load_time":         datetime.utcnow().isoformat(),
             })
 
         if not records:
@@ -181,11 +280,7 @@ async def fetch_ticker(session: aiohttp.ClientSession, ticker: str, missing_date
         return pd.DataFrame(records)
 
 
-async def fetch_all_tickers(gaps: dict[date, list[str]]) -> pd.DataFrame:
-    """
-    Fetches data for every ticker that has at least one missing date.
-    Passes each ticker only the set of dates it is missing.
-    """
+async def _fetch_all(gaps: dict[date, list[str]]) -> pd.DataFrame:
     # Invert: ticker → set of dates it needs
     ticker_to_dates: dict[str, set[date]] = defaultdict(set)
     for trading_date, tickers in gaps.items():
@@ -193,18 +288,15 @@ async def fetch_all_tickers(gaps: dict[date, list[str]]) -> pd.DataFrame:
             ticker_to_dates[ticker].add(trading_date)
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-    frames = []
+    frames    = []
 
     async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
 
-        async def bounded_fetch(ticker: str, dates: set[date]):
+        async def bounded(ticker: str, dates: set[date]):
             async with semaphore:
-                return await fetch_ticker(session, ticker, dates)
+                return await _fetch_ticker(session, ticker, dates)
 
-        tasks = [
-            bounded_fetch(ticker, dates)
-            for ticker, dates in ticker_to_dates.items()
-        ]
+        tasks = [bounded(t, d) for t, d in ticker_to_dates.items()]
 
         success, skipped = 0, 0
         for coro in asyncio.as_completed(tasks):
@@ -216,20 +308,16 @@ async def fetch_all_tickers(gaps: dict[date, list[str]]) -> pd.DataFrame:
                 success += 1
 
     log.info(f"📊 Fetch summary — success: {success}, skipped: {skipped}")
-
-    if not frames:
-        return pd.DataFrame()
-
-    return pd.concat(frames, ignore_index=True)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
 # ──────────────────────────────────────────────
-# STEP 3 — UPLOAD TO S3
+# PHASE 3 — UPLOAD TO S3
 # ──────────────────────────────────────────────
-def upload_to_s3(df: pd.DataFrame) -> None:
+def upload_to_s3(df: pd.DataFrame) -> datetime:
     """
-    Uploads the backfilled rows as a CSV to S3 under the same prefix that
-    Snowpipe watches (S3_PREFIX). Snowpipe will auto-ingest into RAW_STOCK_DATA.
+    Uploads backfilled rows as CSV to S3 under S3_PREFIX.
+    Returns the UTC timestamp just before upload (used for Snowpipe polling).
     """
     s3 = boto3.client(
         "s3",
@@ -238,45 +326,124 @@ def upload_to_s3(df: pd.DataFrame) -> None:
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
     )
 
-    run_timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    s3_key = f"{S3_PREFIX}backfill_{run_timestamp}.csv"
+    upload_time   = datetime.utcnow()
+    run_timestamp = upload_time.strftime("%Y%m%d_%H%M%S")
+    s3_key        = f"{S3_PREFIX}backfill_{run_timestamp}.csv"
 
     csv_bytes = df.to_csv(index=False).encode("utf-8")
     s3.put_object(Bucket=S3_BUCKET_NAME, Key=s3_key, Body=csv_bytes)
 
     log.info(
-        f"📤 Uploaded {len(df)} rows ({df['ticker'].nunique()} tickers, "
-        f"{df['date'].nunique()} dates) → s3://{S3_BUCKET_NAME}/{s3_key}"
+        f"📤 Uploaded {len(df)} rows "
+        f"({df['ticker'].nunique()} tickers, {df['date'].nunique()} dates) "
+        f"→ s3://{S3_BUCKET_NAME}/{s3_key}"
     )
+    return upload_time
+
+
+# ──────────────────────────────────────────────
+# PHASE 4 — WAIT FOR SNOWPIPE
+# ──────────────────────────────────────────────
+def wait_for_snowpipe(upload_time: datetime) -> bool:
+    """
+    Polls RAW_STOCK_DATA every SNOWPIPE_POLL_INTERVAL seconds until new rows
+    with LOAD_TIME > upload_time appear, or SNOWPIPE_POLL_TIMEOUT seconds elapse.
+
+    Returns True if rows were detected, False on timeout.
+    """
+    log.info(
+        f"Phase 4: waiting for Snowpipe (checking every {SNOWPIPE_POLL_INTERVAL}s, "
+        f"timeout {SNOWPIPE_POLL_TIMEOUT}s) …"
+    )
+    upload_ts = upload_time.strftime("%Y-%m-%d %H:%M:%S")
+    deadline  = time.monotonic() + SNOWPIPE_POLL_TIMEOUT
+
+    conn = _snowflake_conn()
+    try:
+        cur = conn.cursor()
+        while time.monotonic() < deadline:
+            cur.execute(f"""
+                SELECT COUNT(*)
+                FROM {SNOWFLAKE_DATABASE}.PUBLIC.RAW_STOCK_DATA
+                WHERE load_time > '{upload_ts}'
+            """)
+            (count,) = cur.fetchone()
+            if count and count > 0:
+                log.info(f"✅ Snowpipe loaded {count} new row(s) — proceeding.")
+                return True
+
+            remaining = int(deadline - time.monotonic())
+            log.info(
+                f"   Still waiting … 0 new rows so far "
+                f"({remaining}s remaining)"
+            )
+            time.sleep(SNOWPIPE_POLL_INTERVAL)
+    finally:
+        conn.close()
+
+    log.warning(
+        f"⏱️  Snowpipe timeout after {SNOWPIPE_POLL_TIMEOUT}s. "
+        "Proceeding with dbt run anyway — data may not be complete."
+    )
+    return False
+
+
+# ──────────────────────────────────────────────
+# PHASE 5 — REFRESH DBT MODELS
+# ──────────────────────────────────────────────
+def run_dbt() -> None:
+    """Runs `dbt run` using the project's virtual-env dbt binary."""
+    log.info("Phase 5: running dbt run …")
+    cmd = [
+        DBT_EXECUTABLE,
+        "run",
+        "--profiles-dir", DBT_PROFILES_DIR,
+        "--project-dir",  DBT_PROJECT_DIR,
+    ]
+    log.info(f"   Command: {' '.join(cmd)}")
+
+    result = subprocess.run(cmd, capture_output=False, text=True)
+
+    if result.returncode == 0:
+        log.info("✅ dbt run completed successfully.")
+    else:
+        log.error(
+            f"❌ dbt run failed with exit code {result.returncode}. "
+            "Check the output above for model errors."
+        )
+        raise SystemExit(result.returncode)
 
 
 # ──────────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────────
-async def main():
-    log.info("🚀 Starting missing-date backfill")
+async def main() -> None:
+    log.info("🚀 Starting autonomous backfill pipeline")
 
-    # 1. Find gaps
-    gaps = fetch_missing_dates()
+    # Phase 1 — detect
+    gaps = detect_gaps()
     if not gaps:
+        log.info("Nothing to backfill. Exiting.")
         return
 
-    date_range_str = f"{min(gaps)} → {max(gaps)}"
-    log.info(f"📅 Gap window: {date_range_str}")
-
-    # 2. Fetch from AlphaVantage
-    df = await fetch_all_tickers(gaps)
+    # Phase 2 — fetch
+    log.info("Phase 2: fetching missing data from AlphaVantage …")
+    df = await _fetch_all(gaps)
     if df.empty:
-        log.warning("⚠️  No data fetched — nothing to upload.")
+        log.warning("⚠️  No data fetched from AlphaVantage — nothing to upload.")
         return
 
-    # 3. Upload to S3
-    upload_to_s3(df)
+    # Phase 3 — upload
+    log.info("Phase 3: uploading to S3 …")
+    upload_time = upload_to_s3(df)
 
-    log.info(
-        "🏁 Backfill complete. "
-        "Wait ~2-5 min for Snowpipe, then run: dbt run"
-    )
+    # Phase 4 — wait
+    wait_for_snowpipe(upload_time)
+
+    # Phase 5 — refresh
+    run_dbt()
+
+    log.info("🏁 Autonomous backfill pipeline complete.")
 
 
 if __name__ == "__main__":
