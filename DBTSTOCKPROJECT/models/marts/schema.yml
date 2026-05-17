@@ -1,0 +1,159 @@
+version: 2
+
+models:
+  - name: mart_ml_features
+    description: >
+      ML training and inference table. Grain: one row per (ticker, date).
+      Combines all price-derived features, fundamental snapshots, analyst signals,
+      and economic indicators alongside the 3-month forward return target variable.
+
+      Usage:
+        - Training set:   WHERE dataset_split = 'training'  (has_3m_target = true)
+        - Inference set:  WHERE dataset_split = 'inference' (most recent ~63 trading days)
+
+      Notes:
+        - Fundamental and analyst columns are snapshot values (refreshed when company
+          overview data is re-loaded) and do not vary by date within a snapshot period.
+        - Economic signal columns (economic_activity_index, avg_*_value) are monthly;
+          most trading-day rows will be null. Forward-fill these in your Python
+          preprocessing pipeline before model training.
+        - All return calculations use adjusted_close to account for splits and dividends.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, date]
+      - min_row_count:
+          min_rows: 400
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - not_empty_string
+      - name: date
+        description: Trading date
+        tests:
+          - not_null
+      - name: company_name
+        description: Full legal company name
+      - name: sector
+        description: GICS sector classification
+      - name: industry
+        description: Industry sub-classification
+      - name: country
+        description: Country of headquarters
+      - name: exchange
+        description: Listing exchange
+
+      # --- Price features ---
+      - name: close
+        description: Raw closing price (not adjusted)
+      - name: adjusted_close
+        description: Closing price adjusted for splits and dividends
+      - name: volume
+        description: Shares traded on this date
+      - name: daily_return
+        description: (adjusted_close / prior_adjusted_close) - 1
+      - name: return_1m
+        description: 21-trading-day backward-looking return
+      - name: return_3m
+        description: 63-trading-day backward-looking return
+      - name: return_6m
+        description: 126-trading-day backward-looking return
+      - name: ma_20d
+        description: 20-day simple moving average of adjusted close
+      - name: ma_50d
+        description: 50-day simple moving average of adjusted close
+      - name: ma_200d
+        description: 200-day simple moving average of adjusted close
+      - name: bollinger_pct_b
+        description: Bollinger Band %B — position within the 2-sigma band around the 20-day MA
+      - name: price_to_ma_20d
+        description: adjusted_close / ma_20d; above 1 = price above 20-day average
+      - name: price_to_ma_50d
+        description: adjusted_close / ma_50d
+      - name: price_to_ma_200d
+        description: adjusted_close / ma_200d
+      - name: volatility_20d
+        description: 20-day realized volatility (rolling stddev of daily returns)
+      - name: volatility_60d
+        description: 60-day realized volatility
+      - name: volume_ratio_20d
+        description: Today's volume / 20-day average volume
+      - name: rsi_14
+        description: 14-period RSI; <30 oversold, >70 overbought
+
+      # --- Fundamental features ---
+      - name: market_capitalization
+        description: Total market cap in USD (snapshot)
+      - name: shares_outstanding
+        description: Total shares outstanding (snapshot)
+      - name: shares_float
+        description: Publicly tradable float shares (snapshot)
+      - name: diluted_eps_ttm
+        description: Diluted earnings per share, trailing twelve months
+      - name: pe_ratio
+        description: Price-to-earnings ratio
+      - name: trailing_pe
+        description: Trailing twelve-month P/E
+      - name: forward_pe
+        description: Forward P/E based on analyst earnings estimates
+      - name: peg_ratio
+        description: Price/earnings-to-growth ratio
+      - name: price_to_book_ratio
+        description: Price-to-book ratio
+      - name: price_to_sales_ratio_ttm
+        description: Price-to-sales ratio, trailing twelve months
+      - name: revenue_ttm
+        description: Revenue, trailing twelve months
+      - name: ebitda
+        description: EBITDA; may be negative for unprofitable companies
+      - name: ev_to_ebitda
+        description: Enterprise value / EBITDA
+      - name: ev_to_revenue
+        description: Enterprise value / Revenue
+      - name: beta
+        description: Market beta; 1.0 = moves in line with S&P 500
+
+      # --- Analyst features ---
+      - name: analyst_target_price
+        description: Consensus analyst price target (snapshot)
+      - name: net_bullish_score
+        description: Weighted analyst consensus normalized to [-2, +2]; positive = net bullish
+      - name: analyst_upside
+        description: (analyst_target_price / latest_close) - 1
+      - name: total_analyst_ratings
+        description: Total number of analyst ratings across all sentiment buckets
+      - name: percent_insiders
+        description: Percentage of shares held by insiders (0–100)
+      - name: percent_institutions
+        description: Percentage of shares held by institutions (0–100)
+      - name: total_aligned_ownership_pct
+        description: percent_insiders + percent_institutions
+
+      # --- Economic features ---
+      - name: economic_activity_index
+        description: >
+          Average across all applicable economic indicators for this industry and date.
+          Monthly cadence; null on non-reporting trading days — forward-fill before training.
+      - name: avg_leading_value
+        description: Average leading indicator value for this industry (predicts future direction)
+      - name: avg_coincident_value
+        description: Average coincident indicator value (reflects current economic state)
+      - name: avg_lagging_value
+        description: Average lagging indicator value (confirms past economic trends)
+      - name: econ_indicator_count
+        description: Number of distinct indicators contributing to the economic signal on this date
+
+      # --- Target variable ---
+      - name: forward_return_3m
+        description: >
+          Primary ML target: (adjusted_close 63 trading days ahead / adjusted_close today) - 1.
+          Null for the most recent ~63 trading days.
+      - name: forward_return_1m
+        description: >
+          Alternative target: 21-trading-day forward return.
+          Null for the most recent ~21 trading days.
+      - name: has_3m_target
+        description: True when a complete 63-day forward window exists; false for inference rows
+      - name: dataset_split
+        description: "'training' when has_3m_target = true; 'inference' for the live prediction window"

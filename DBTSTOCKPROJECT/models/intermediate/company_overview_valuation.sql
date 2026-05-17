@@ -11,7 +11,7 @@ trailing_pe,
 forward_pe,
 peg_ratio,
 price_to_book_ratio,
-book_value
+book_value,
 price_to_sales_ratio_ttm,
 revenue_ttm,
 revenue_per_share_ttm,

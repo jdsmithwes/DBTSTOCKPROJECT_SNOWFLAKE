@@ -1,7 +1,7 @@
 name: "DBTSTOCKPROJECT"
 version: "1.0.0"
 config-version: 2
-profile: "DBTSTOCKPROJECT"
+profile: "dbt_stockproject"
 
 model-paths:
   - models

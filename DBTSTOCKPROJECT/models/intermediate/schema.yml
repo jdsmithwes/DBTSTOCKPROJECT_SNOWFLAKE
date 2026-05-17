@@ -375,3 +375,148 @@ models:
         tests:
           - not_null
           - not_empty_string
+
+  - name: int_stock_price_features
+    description: >
+      Daily price-derived features for each ticker at (ticker, date) grain.
+      All returns use adjusted_close to account for splits and dividends.
+      Window functions require sufficient history: RSI needs 14 days, 200-day MA
+      needs 200 days, and 6-month return needs 126 days before values are non-null.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, date]
+      - min_row_count:
+          min_rows: 400
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - not_empty_string
+      - name: date
+        description: Trading date
+        tests:
+          - not_null
+      - name: daily_return
+        description: Percentage return from the prior trading day's adjusted close
+      - name: return_1m
+        description: 21-trading-day backward-looking return
+      - name: return_3m
+        description: 63-trading-day backward-looking return
+      - name: return_6m
+        description: 126-trading-day backward-looking return
+      - name: ma_20d
+        description: 20-day simple moving average of adjusted close
+      - name: ma_50d
+        description: 50-day simple moving average of adjusted close
+      - name: ma_200d
+        description: 200-day simple moving average of adjusted close
+      - name: bollinger_pct_b
+        description: >
+          Bollinger Band %B: (price - 20d MA) / (2 * 20d stddev).
+          0.5 = midline, >1 = above upper band, <0 = below lower band.
+      - name: price_to_ma_20d
+        description: Ratio of adjusted close to 20-day MA; >1 means price is above the average
+      - name: price_to_ma_50d
+        description: Ratio of adjusted close to 50-day MA
+      - name: price_to_ma_200d
+        description: Ratio of adjusted close to 200-day MA
+      - name: volatility_20d
+        description: 20-day rolling standard deviation of daily returns (realized volatility)
+      - name: volatility_60d
+        description: 60-day rolling standard deviation of daily returns
+      - name: volume_ratio_20d
+        description: Today's volume divided by 20-day average volume; >1 = above-average activity
+      - name: rsi_14
+        description: >
+          14-period Relative Strength Index using a simple moving average approximation.
+          Below 30 = oversold signal, above 70 = overbought signal.
+
+  - name: int_forward_returns
+    description: >
+      3-month and 1-month forward returns per (ticker, date). These are the ML target labels.
+      Use has_3m_target = true to filter to rows with a complete forward window.
+      The most recent ~63 trading days will have has_3m_target = false because the
+      future data does not yet exist.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, date]
+      - min_row_count:
+          min_rows: 400
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+          - not_empty_string
+      - name: date
+        tests:
+          - not_null
+      - name: forward_return_3m
+        description: >
+          Primary ML target: (adjusted_close 63 trading days later / adjusted_close today) - 1.
+          Null for the most recent ~63 trading days.
+      - name: forward_return_1m
+        description: >
+          Alternative target: (adjusted_close 21 trading days later / adjusted_close today) - 1.
+          Null for the most recent ~21 trading days.
+      - name: has_3m_target
+        description: True when a complete 3-month forward window exists; false for the inference set.
+
+  - name: int_analyst_signals
+    description: >
+      Derived analyst consensus and ownership signals per ticker.
+      Ticker grain — snapshot from the latest company overview load.
+      Join to int_stock_price_features on ticker to use as ML features.
+    tests:
+      - min_row_count:
+          min_rows: 400
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+          - unique
+          - not_empty_string
+      - name: net_bullish_score
+        description: >
+          Weighted analyst consensus normalized to [-2, +2].
+          Strong buy = +2, buy = +1, sell = -1, strong sell = -2, hold = 0.
+          Positive values = net bullish; null if no ratings exist.
+      - name: analyst_upside
+        description: >
+          (analyst_target_price / latest_close) - 1.
+          How far analysts expect the price to move from the current level.
+      - name: total_aligned_ownership_pct
+        description: percent_insiders + percent_institutions; high values suggest alignment with long-term holders
+
+  - name: int_economic_signals
+    description: >
+      Industry-level economic leading indicator signals aggregated to (indicator_industry, date) grain.
+      Resolves the fan-out grain problem in stock_performance_with_indicators, which produces one row
+      per (ticker, date, indicator_name). This model collapses to one row per (indicator_industry, date)
+      for clean joining to the price spine. Economic data is typically monthly, so trading-day joins
+      will produce nulls on non-reporting dates — forward-fill in downstream ML preprocessing.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [indicator_industry, date]
+      - min_row_count:
+          min_rows: 10
+    columns:
+      - name: indicator_industry
+        description: Economic industry label (from Snowflake Marketplace data)
+        tests:
+          - not_null
+          - not_empty_string
+      - name: date
+        description: Observation date for this set of indicator values
+        tests:
+          - not_null
+      - name: indicator_count
+        description: Number of distinct indicators contributing to this industry-date row
+      - name: economic_activity_index
+        description: Simple average across all applicable economic indicators for this industry and date
+      - name: avg_leading_value
+        description: Average value of leading indicators (predict future economic direction)
+      - name: avg_coincident_value
+        description: Average value of coincident indicators (reflect current economic state)
+      - name: avg_lagging_value
+        description: Average value of lagging indicators (confirm past economic trends)
