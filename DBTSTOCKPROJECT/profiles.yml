@@ -1,4 +1,4 @@
-DBTSTOCKPROJECT:
+dbt_stockproject:
   target: dev
   outputs:
     dev:
