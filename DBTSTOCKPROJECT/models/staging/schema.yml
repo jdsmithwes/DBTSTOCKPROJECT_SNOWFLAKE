@@ -325,7 +325,7 @@ models:
       tier: critical
       refresh_frequency: daily
       sla: daily via fetch_alphavantage_fixed_income.py
-    description: Cleaned daily US Treasury yield observations. Grain: date, maturity. Deduped on latest load.
+    description: "Cleaned daily US Treasury yield observations. Grain: date, maturity. Deduped on latest load."
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [date, maturity]
@@ -354,7 +354,7 @@ models:
       tier: critical
       refresh_frequency: daily
       sla: daily via fetch_alphavantage_fixed_income.py
-    description: Cleaned daily effective federal funds rate. Grain: date.
+    description: "Cleaned daily effective federal funds rate. Grain: date."
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [date]
@@ -378,7 +378,7 @@ models:
       tier: supporting
       refresh_frequency: monthly
       sla: monthly release (typically first two weeks of month)
-    description: Cleaned monthly CPI (all urban consumers). Grain: date (first of each month).
+    description: "Cleaned monthly CPI (all urban consumers). Grain: date (first of each month)."
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [date]
