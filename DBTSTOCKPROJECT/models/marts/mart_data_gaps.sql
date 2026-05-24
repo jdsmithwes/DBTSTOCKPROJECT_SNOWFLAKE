@@ -1,7 +1,9 @@
 {{ config(
     materialized='table',
     table_format='iceberg',
-    storage_serialization_policy='COMPATIBLE'
+    storage_serialization_policy='COMPATIBLE',
+    on_schema_change='fail',
+    tags=['marts', 'operational']
 ) }}
 
 -- Identifies missing trading days per ticker between each ticker's last loaded

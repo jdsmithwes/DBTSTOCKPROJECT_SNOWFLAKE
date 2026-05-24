@@ -1,7 +1,11 @@
 {{ config(
     materialized='table',
     table_format='iceberg',
-    storage_serialization_policy='COMPATIBLE'
+    storage_serialization_policy='COMPATIBLE',
+    cluster_by=['ticker', 'date'],
+    unique_key=['ticker', 'date'],
+    on_schema_change='fail',
+    tags=['marts', 'ml_input']
 ) }}
 
 -- ML training and inference table. Grain: one row per (ticker, date).
@@ -23,9 +27,16 @@ forward_returns as (
     select
         ticker,
         date,
-        forward_return_3m,
         forward_return_1m,
-        has_3m_target
+        forward_return_3m,
+        forward_return_6m,
+        forward_return_9m,
+        forward_return_12m,
+        has_1m_target,
+        has_3m_target,
+        has_6m_target,
+        has_9m_target,
+        has_12m_target
     from {{ ref('int_forward_returns') }}
 
 ),
@@ -81,6 +92,18 @@ industry_mapping as (
 economic_signals as (
 
     select * from {{ ref('int_economic_signals') }}
+
+),
+
+macro_signals as (
+
+    select * from {{ ref('int_macro_signals') }}
+
+),
+
+yield_curve as (
+
+    select * from {{ ref('int_yield_curve') }}
 
 ),
 
@@ -216,12 +239,42 @@ select
     es.avg_lagging_value,
     es.indicator_count          as econ_indicator_count,
 
-    -- Target variable
-    fr.forward_return_3m,
-    fr.forward_return_1m,
-    fr.has_3m_target,
+    -- Macro / risk signals from FRED (daily; forward-filled through weekends and gaps)
+    ms.vix,
+    ms.oil_price_wti,
+    ms.oil_price_brent,
+    ms.inflation_breakeven_10y,
+    ms.hy_credit_spread,
 
-    -- dataset_split: use 'training' rows to train; 'inference' rows for live predictions
+    -- Fixed income signals from yield curve (key inputs for equity risk premium)
+    yc.yield_2y,
+    yc.yield_10y,
+    yc.fed_funds_rate,
+    yc.spread_2s10s,
+    yc.spread_3m10y,
+    yc.is_2s10s_inverted,
+    yc.term_premium,
+    yc.yield_10y_1d_chg_bps,
+
+    -- Asset class tag — 'EQUITY' here; 'FIXED_INCOME' in mart_fixed_income
+    'EQUITY'                                                   as asset_class,
+
+    -- Target variables (all prediction horizons)
+    fr.forward_return_1m,
+    fr.forward_return_3m,
+    fr.forward_return_6m,
+    fr.forward_return_9m,
+    fr.forward_return_12m,
+
+    -- Target availability flags
+    fr.has_1m_target,
+    fr.has_3m_target,
+    fr.has_6m_target,
+    fr.has_9m_target,
+    fr.has_12m_target,
+
+    -- dataset_split: 'training' when the shortest horizon (3m) has a complete window;
+    -- 'inference' for the most recent ~63 trading days where targets don't exist yet
     case
         when fr.has_3m_target then 'training'
         else 'inference'
@@ -234,3 +287,7 @@ left join forward_returns fr
 left join economic_signals es
     on sp.indicator_industry    = es.indicator_industry
     and sp.date                 = es.date
+left join macro_signals ms
+    on sp.date = ms.date
+left join yield_curve yc
+    on sp.date = yc.date

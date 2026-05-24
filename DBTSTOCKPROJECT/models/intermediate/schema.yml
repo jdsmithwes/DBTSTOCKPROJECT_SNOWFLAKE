@@ -450,10 +450,10 @@ models:
 
   - name: int_forward_returns
     description: >
-      3-month and 1-month forward returns per (ticker, date). These are the ML target labels.
-      Use has_3m_target = true to filter to rows with a complete forward window.
-      The most recent ~63 trading days will have has_3m_target = false because the
-      future data does not yet exist.
+      Forward return targets at 1, 3, 6, 9, and 12-month horizons per (ticker, date).
+      These are the ML target labels for the retirement stock-picking model.
+      Use has_3m_target = true to filter to rows with a complete 3-month forward window.
+      Longer horizons (6m, 9m, 12m) will be null for more recent rows.
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [ticker, date]
@@ -467,16 +467,152 @@ models:
       - name: date
         tests:
           - not_null
+      - name: forward_return_1m
+        description: >
+          (adjusted_close 21 trading days later / adjusted_close today) - 1.
+          Null for the most recent ~21 trading days.
       - name: forward_return_3m
         description: >
           Primary ML target: (adjusted_close 63 trading days later / adjusted_close today) - 1.
           Null for the most recent ~63 trading days.
-      - name: forward_return_1m
+      - name: forward_return_6m
         description: >
-          Alternative target: (adjusted_close 21 trading days later / adjusted_close today) - 1.
-          Null for the most recent ~21 trading days.
+          (adjusted_close 126 trading days later / adjusted_close today) - 1.
+          Null for the most recent ~6 months.
+      - name: forward_return_9m
+        description: >
+          (adjusted_close 189 trading days later / adjusted_close today) - 1.
+          Null for the most recent ~9 months.
+      - name: forward_return_12m
+        description: >
+          (adjusted_close 252 trading days later / adjusted_close today) - 1.
+          Null for the most recent ~12 months.
+      - name: has_1m_target
+        description: True when a complete 1-month forward window exists.
       - name: has_3m_target
-        description: True when a complete 3-month forward window exists; false for the inference set.
+        description: True when a complete 3-month forward window exists.
+      - name: has_6m_target
+        description: True when a complete 6-month forward window exists.
+      - name: has_9m_target
+        description: True when a complete 9-month forward window exists.
+      - name: has_12m_target
+        description: True when a complete 12-month forward window exists.
+
+  - name: int_yield_curve
+    description: >
+      US Treasury yield curve pivoted wide, forward-filled to every NYSE trading day,
+      with derived spread signals and rate-of-change metrics.
+      Fixed income asset class boundary: only refs fixed income staging models.
+      Cross-asset joins (to equities) happen exclusively at mart layer.
+      Grain: one row per trading date.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 1000
+    columns:
+      - name: date
+        tests: [not_null, unique]
+      - name: yield_3m
+        description: 3-month Treasury yield (%)
+      - name: yield_2y
+        description: 2-year Treasury yield (%)
+      - name: yield_5y
+        description: 5-year Treasury yield (%)
+      - name: yield_7y
+        description: 7-year Treasury yield (%)
+      - name: yield_10y
+        description: 10-year Treasury yield (%) — benchmark risk-free rate
+      - name: yield_30y
+        description: 30-year Treasury yield (%)
+      - name: fed_funds_rate
+        description: Effective federal funds rate (%)
+      - name: spread_2s10s
+        description: 10y minus 2y yield (pp); negative = inverted curve = elevated recession risk
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -5
+              max_value: 10
+              config:
+                severity: warn
+      - name: spread_3m10y
+        description: 10y minus 3m yield (pp); Fed's preferred inversion metric
+      - name: spread_2s30s
+        description: 30y minus 2y yield (pp); long-end demand signal
+      - name: term_premium
+        description: 10y yield minus fed funds rate (pp); duration risk compensation
+      - name: is_2s10s_inverted
+        description: True when 2s10s spread is negative
+      - name: is_3m10y_inverted
+        description: True when 3m10y spread is negative
+      - name: yield_10y_1d_chg_bps
+        description: 1-day change in 10y yield in basis points
+      - name: yield_10y_5d_chg_bps
+        description: 5-day change in 10y yield in basis points
+      - name: yield_2y_1d_chg_bps
+        description: 1-day change in 2y yield in basis points
+      - name: cpi_value
+        description: CPI index value (forward-filled from monthly release)
+      - name: cpi_yoy_pct
+        description: Year-over-year CPI change (%), approximated using 252-day lag
+
+  - name: int_macro_signals
+    description: >
+      Daily macro and risk signals pivoted wide and forward-filled to every NYSE trading day.
+      Sources: FRED API (VIX, crude oil, inflation breakeven, HY credit spread).
+      Forward-fill ensures no null gaps in the ML feature matrix.
+      Grain: one row per trading_date.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 1000
+    columns:
+      - name: date
+        description: NYSE trading date
+        tests:
+          - not_null
+          - unique
+      - name: vix
+        description: CBOE Volatility Index — market fear gauge; >30 signals elevated risk
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 200
+              config:
+                severity: warn
+      - name: oil_price_wti
+        description: WTI crude oil spot price in USD/barrel
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 500
+              config:
+                severity: warn
+      - name: oil_price_brent
+        description: Brent crude oil spot price in USD/barrel
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 500
+              config:
+                severity: warn
+      - name: inflation_breakeven_10y
+        description: 10-year breakeven inflation rate (%) — market inflation expectations
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -5
+              max_value: 15
+              config:
+                severity: warn
+      - name: hy_credit_spread
+        description: ICE BofA US HY option-adjusted spread (%) — credit stress indicator; spikes during crises
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 50
+              config:
+                severity: warn
 
   - name: int_analyst_signals
     description: >

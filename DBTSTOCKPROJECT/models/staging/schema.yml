@@ -2,6 +2,11 @@ version: 2
 
 models:
   - name: stg_stockprice
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
     description: Staged daily OHLCV stock price data from AlphaVantage API
     tests:
       - dbt_utils.unique_combination_of_columns:
@@ -87,6 +92,11 @@ models:
               inclusive: false
 
   - name: stg_companyoverview
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: monthly
+      sla: monthly on load
     description: Staged company fundamentals and metadata from AlphaVantage API
     tests:
       - recency:
@@ -309,7 +319,125 @@ models:
               min_value: 0
               inclusive: false
 
+  - name: stg_treasury_yields
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: daily via fetch_alphavantage_fixed_income.py
+    description: Cleaned daily US Treasury yield observations. Grain: date, maturity. Deduped on latest load.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date, maturity]
+      - min_row_count:
+          min_rows: 100
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: maturity
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['3month', '2year', '5year', '7year', '10year', '30year']
+      - name: yield_pct
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: -2
+              max_value: 25
+              config:
+                severity: warn
+
+  - name: stg_fed_funds_rate
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: daily via fetch_alphavantage_fixed_income.py
+    description: Cleaned daily effective federal funds rate. Grain: date.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 100
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: rate_pct
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 25
+              config:
+                severity: warn
+
+  - name: stg_cpi
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: monthly
+      sla: monthly release (typically first two weeks of month)
+    description: Cleaned monthly CPI (all urban consumers). Grain: date (first of each month).
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 12
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: cpi_value
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 50
+              max_value: 1000
+              config:
+                severity: warn
+
+  - name: stg_fred_macro
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: daily via fetch_fred_macro_data.py
+    description: >
+      Cleaned daily macro and risk signal observations from the FRED API.
+      Deduplicated by (series_id, date). Missing observations ('.') dropped at ingestion.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [series_id, date]
+      - min_row_count:
+          min_rows: 100
+    columns:
+      - name: series_id
+        description: FRED series identifier (e.g. VIXCLS, DCOILWTICO)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['VIXCLS', 'DCOILWTICO', 'DCOILBRENTEU', 'T10YIE', 'BAMLH0A0HYM2']
+      - name: series_name
+        description: Human-readable series name
+        tests:
+          - not_null
+      - name: date
+        description: Observation date
+        tests:
+          - not_null
+          - no_future_date:
+              column_name: date
+      - name: value
+        description: Numeric observation value
+        tests:
+          - not_null
+
   - name: stg_indicator_metadata
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: as-needed
+      sla: static reference data
     description: Staged metadata for industry-level economic leading indicators
     tests:
       - min_row_count:
@@ -342,6 +470,11 @@ models:
           - not_empty_string
 
   - name: stg_indicator_timeseries
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: monthly
+      sla: monthly on Snowflake Marketplace update
     description: Staged time series values for economic leading indicators
     tests:
       - dbt_utils.unique_combination_of_columns:

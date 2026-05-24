@@ -19,7 +19,7 @@ snapshot-paths:
 models:
   DBTSTOCKPROJECT:
     staging:
-      +materialized: view
+      +materialized: ephemeral
       +schema: JDS_STAGING
     intermediate:
       +materialized: view
@@ -29,3 +29,5 @@ models:
       +schema: JDS_MARTS
       +table_format: iceberg
       +storage_serialization_policy: COMPATIBLE
+      +on_schema_change: fail
+      +tags: ['marts']
