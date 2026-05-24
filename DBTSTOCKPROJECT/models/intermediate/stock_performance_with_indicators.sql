@@ -93,14 +93,14 @@ indicators as (
 
 indicators_exploded as (
     select
-        indicator_name,
-        indicator_classification,
-        indicator_units,
-        indicator_value,
-        indicator_date,
+        indicators.indicator_name,
+        indicators.indicator_classification,
+        indicators.indicator_units,
+        indicators.indicator_value,
+        indicators.indicator_date,
         trim(f.value::string) as indicator_industry
     from indicators,
-        lateral flatten(input => split(indicator_industrylist, ',')) f
+        lateral flatten(input => split(indicators.indicator_industrylist, ',')) as f
 ),
 
 stock_with_company as (
@@ -169,9 +169,9 @@ stock_with_company as (
         co.analyst_rating_strong_sell,
         co.analyst_target_price,
         m.indicator_industry as mapped_indicator_industry
-    from stock_prices sp
-    inner join company co on sp.ticker = co.ticker
-    left join mapping m on upper(co.sector) = m.company_industry
+    from stock_prices as sp
+    inner join company as co on sp.ticker = co.ticker
+    left join mapping as m on upper(co.sector) = m.company_industry
 )
 
 select
@@ -244,7 +244,8 @@ select
     ie.indicator_units,
     ie.indicator_value,
     ie.indicator_date
-from stock_with_company swc
-left join indicators_exploded ie
-    on swc.mapped_indicator_industry = ie.indicator_industry
-    and swc.date = ie.indicator_date
+from stock_with_company as swc
+left join indicators_exploded as ie
+    on
+        swc.mapped_indicator_industry = ie.indicator_industry
+        and swc.date = ie.indicator_date

@@ -174,11 +174,11 @@ spine as (
         -- Industry → indicator bridge
         im.indicator_industry
 
-    from price_features pf
-    left join company_nonfinancial cn on pf.ticker = cn.ticker
-    left join company_valuation    cv on pf.ticker = cv.ticker
-    left join analyst_signals     sig on pf.ticker = sig.ticker
-    left join industry_mapping     im on upper(trim(cn.industry)) = im.company_industry
+    from price_features as pf
+    left join company_nonfinancial as cn on pf.ticker = cn.ticker
+    left join company_valuation as cv on pf.ticker = cv.ticker
+    left join analyst_signals as sig on pf.ticker = sig.ticker
+    left join industry_mapping as im on upper(trim(cn.industry)) = im.company_industry
 
 )
 
@@ -243,7 +243,7 @@ select
     es.avg_leading_value,
     es.avg_coincident_value,
     es.avg_lagging_value,
-    es.indicator_count          as econ_indicator_count,
+    es.indicator_count as econ_indicator_count,
 
     -- Macro / risk signals from FRED (daily; forward-filled through weekends and gaps)
     ms.vix,
@@ -284,7 +284,7 @@ select
     ns.av_bearish_pct,
 
     -- Asset class tag — 'EQUITY' here; 'FIXED_INCOME' in mart_fixed_income
-    'EQUITY'                                                   as asset_class,
+    'EQUITY' as asset_class,
 
     -- Target variables (all prediction horizons)
     fr.forward_return_1m,
@@ -307,16 +307,18 @@ select
         else 'inference'
     end as dataset_split
 
-from spine sp
-left join forward_returns fr
-    on sp.ticker = fr.ticker
-    and sp.date  = fr.date
-left join economic_signals es
-    on sp.indicator_industry    = es.indicator_industry
-    and sp.date                 = es.date
-left join macro_signals ms
+from spine as sp
+left join forward_returns as fr
+    on
+        sp.ticker = fr.ticker
+        and sp.date = fr.date
+left join economic_signals as es
+    on
+        sp.indicator_industry = es.indicator_industry
+        and sp.date = es.date
+left join macro_signals as ms
     on sp.date = ms.date
-left join yield_curve yc
+left join yield_curve as yc
     on sp.date = yc.date
-left join news_sentiment ns
+left join news_sentiment as ns
     on sp.date = ns.date

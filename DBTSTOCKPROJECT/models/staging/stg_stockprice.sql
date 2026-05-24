@@ -3,8 +3,8 @@
 with source_data as (
     select
         *,
-        'AlphaVantage API'          as data_source,
-        current_timestamp           as load_date
+        'AlphaVantage API' as data_source,
+        current_timestamp as load_date
     from {{ source('ALPHAVANTAGE_API', 'RAW_STOCK_DATA') }}
 )
 

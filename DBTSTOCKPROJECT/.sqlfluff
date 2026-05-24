@@ -1,0 +1,48 @@
+[sqlfluff]
+templater = dbt
+dialect = snowflake
+runaway_limit = 10
+max_line_length = 120
+indent_unit = space
+tab_space_size = 4
+
+# Rules to enforce — aligned with hedge-fund dbt best practices
+exclude_rules =
+    # RF05: allow underscores in identifiers (standard in dbt)
+    RF05,
+    # RF04: 'date' and 'value' are established column names throughout the project;
+    #        quoting them would cascade changes across all models
+    RF04,
+    # AL07: allow SELECT * in staging CTEs with QUALIFY (pattern is intentional)
+    AL07,
+    # ST06: column ordering (e.g. asset_class literal first) is intentional
+    #       for readability in cross-asset mart models
+    ST06,
+    # JJ01: jinja spacing — dbt templates vary
+    JJ01
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.identifiers]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = upper
+
+[sqlfluff:rules:layout.indent]
+indent_unit = space
+tab_space_size = 4
+
+[sqlfluff:rules:references.consistent]
+# Enforce consistent table aliases across the project
+force_enable = false
+
+[sqlfluff:templater:dbt]
+project_dir = ./
+profiles_dir = ./
+profile = dbt_stockproject
+target = dev

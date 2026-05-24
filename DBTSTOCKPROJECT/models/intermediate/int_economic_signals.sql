@@ -8,11 +8,11 @@
 with indicator_detail as (
 
     select
-        name              as indicator_name,
-        classification    as indicator_classification,
-        units             as indicator_units,
+        name as indicator_name,
+        classification as indicator_classification,
+        units as indicator_units,
         industrylist,
-        value             as indicator_value,
+        value as indicator_value,
         date
     from {{ ref('industry_indicators_descriptions') }}
 
@@ -22,14 +22,14 @@ with indicator_detail as (
 indicators_by_industry as (
 
     select
-        indicator_name,
-        indicator_classification,
-        indicator_units,
+        indicator_detail.indicator_name,
+        indicator_detail.indicator_classification,
+        indicator_detail.indicator_units,
         trim(f.value::string) as indicator_industry,
-        indicator_value,
-        date
+        indicator_detail.indicator_value,
+        indicator_detail.date
     from indicator_detail,
-        lateral flatten(input => split(industrylist, ',')) f
+        lateral flatten(input => split(indicator_detail.industrylist, ',')) as f
 
 )
 
@@ -37,15 +37,15 @@ select
     indicator_industry,
     date,
 
-    count(distinct indicator_name)                                                       as indicator_count,
+    count(distinct indicator_name) as indicator_count,
 
     -- Composite economic activity: simple average across all applicable indicators
-    avg(indicator_value)                                                                 as economic_activity_index,
+    avg(indicator_value) as economic_activity_index,
 
     -- Classification-level averages for leading/coincident/lagging signals
-    avg(case when indicator_classification = 'Leading'    then indicator_value end)      as avg_leading_value,
-    avg(case when indicator_classification = 'Coincident' then indicator_value end)      as avg_coincident_value,
-    avg(case when indicator_classification = 'Lagging'    then indicator_value end)      as avg_lagging_value
+    avg(case when indicator_classification = 'Leading' then indicator_value end) as avg_leading_value,
+    avg(case when indicator_classification = 'Coincident' then indicator_value end) as avg_coincident_value,
+    avg(case when indicator_classification = 'Lagging' then indicator_value end) as avg_lagging_value
 
 from indicators_by_industry
 group by 1, 2

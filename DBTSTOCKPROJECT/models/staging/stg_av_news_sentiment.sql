@@ -37,5 +37,6 @@ select
     bearish_pct
 
 from deduped
-where date  is not null
-  and topic is not null
+where
+    date is not NULL
+    and topic is not NULL

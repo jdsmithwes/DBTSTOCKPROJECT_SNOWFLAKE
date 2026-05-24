@@ -49,4 +49,4 @@ select
     us_apac_tone
 
 from deduped
-where date is not null
+where date is not NULL

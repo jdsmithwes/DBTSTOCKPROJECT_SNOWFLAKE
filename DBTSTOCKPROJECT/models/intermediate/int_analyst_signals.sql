@@ -33,14 +33,14 @@ with_totals as (
     select
         cs.*,
         lp.latest_close,
-        coalesce(cs.analyst_rating_strong_buy,   0)
-        + coalesce(cs.analyst_rating_buy,         0)
-        + coalesce(cs.analyst_rating_hold,        0)
-        + coalesce(cs.analyst_rating_sell,        0)
+        coalesce(cs.analyst_rating_strong_buy, 0)
+        + coalesce(cs.analyst_rating_buy, 0)
+        + coalesce(cs.analyst_rating_hold, 0)
+        + coalesce(cs.analyst_rating_sell, 0)
         + coalesce(cs.analyst_rating_strong_sell, 0) as total_analyst_ratings
 
-    from company_snapshot cs
-    left join latest_price lp on cs.ticker = lp.ticker
+    from company_snapshot as cs
+    left join latest_price as lp on cs.ticker = lp.ticker
 
 )
 
@@ -59,20 +59,18 @@ select
     -- Positive = net bullish, negative = net bearish, null = no ratings
     case
         when total_analyst_ratings > 0
-        then (
-            2.0 * coalesce(analyst_rating_strong_buy,   0)
-            + 1.0 * coalesce(analyst_rating_buy,         0)
-            - 1.0 * coalesce(analyst_rating_sell,        0)
-            - 2.0 * coalesce(analyst_rating_strong_sell, 0)
-        ) / total_analyst_ratings
-        else null
+            then (
+                2.0 * coalesce(analyst_rating_strong_buy, 0)
+                + 1.0 * coalesce(analyst_rating_buy, 0)
+                - 1.0 * coalesce(analyst_rating_sell, 0)
+                - 2.0 * coalesce(analyst_rating_strong_sell, 0)
+            ) / total_analyst_ratings
     end as net_bullish_score,
 
     -- How much do analysts expect the price to move from current levels?
     case
         when latest_close > 0 and analyst_target_price > 0
-        then (analyst_target_price / latest_close) - 1
-        else null
+            then (analyst_target_price / latest_close) - 1
     end as analyst_upside,
 
     -- Ownership concentration signals

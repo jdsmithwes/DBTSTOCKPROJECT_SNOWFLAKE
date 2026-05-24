@@ -61,7 +61,7 @@ select
     date,
 
     -- Asset class tag for cross-asset joins and filtering
-    'FIXED_INCOME'                                           as asset_class,
+    'FIXED_INCOME' as asset_class,
 
     -- Yield curve levels (%)
     yield_3m,
@@ -93,10 +93,9 @@ select
 
     -- Approximate real yield (nominal 10y minus trailing CPI — proxy only)
     case
-        when cpi_yoy_pct is not null
-        then yield_10y - (cpi_yoy_pct / 100)
-        else null
-    end                                                      as approx_real_yield_10y,
+        when cpi_yoy_pct is not NULL
+            then yield_10y - (cpi_yoy_pct / 100)
+    end as approx_real_yield_10y,
 
     -- Fed policy regime
     fed_regime,
@@ -104,6 +103,6 @@ select
 
     -- Retirement planning signal: 10y yield >= 4% historically indicates
     -- competitive fixed income returns vs. typical equity risk premiums
-    case when yield_10y >= 4.0 then true else false end      as fi_attractive_flag
+    coalesce(yield_10y >= 4.0, FALSE) as fi_attractive_flag
 
 from with_inversion_duration
