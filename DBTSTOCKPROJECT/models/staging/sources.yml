@@ -73,6 +73,43 @@ sources:
           - min_row_count:
               min_rows: 100
 
+  - name: GDELT
+    database: DBT_STOCKPROJECT
+    schema: PUBLIC
+    description: >
+      Global Database of Events, Language, and Tone — daily aggregated geopolitical
+      event signals filtered to US-relevant events. Loaded by fetch_gdelt_events.py.
+    tables:
+      - name: RAW_GDELT_DAILY
+        description: >
+          One row per calendar date. Aggregated from GDELT 1.0 daily export CSVs.
+          Covers US-relevant events only (actor or action geography = US).
+        freshness:
+          warn_after: {count: 48, period: hour}
+          error_after: {count: 96, period: hour}
+        loaded_at_field: load_timestamp
+        tests:
+          - min_row_count:
+              min_rows: 100
+
+  - name: AV_NEWS
+    database: DBT_STOCKPROJECT
+    schema: PUBLIC
+    description: >
+      Market news sentiment aggregated by (date, topic) from the AlphaVantage
+      NEWS_SENTIMENT endpoint. Loaded by fetch_av_news_sentiment.py.
+      History available from ~2022-01-01 onward.
+    tables:
+      - name: RAW_AV_NEWS_SENTIMENT
+        description: One row per (date, topic). Pre-aggregated from article-level API responses.
+        freshness:
+          warn_after: {count: 48, period: hour}
+          error_after: {count: 96, period: hour}
+        loaded_at_field: load_timestamp
+        tests:
+          - min_row_count:
+              min_rows: 10
+
   - name: ECONOMIC_INDICATORS
     database: INDUSTRYBASED_ECONOMIC_LEADING_INDICATORS
     schema: PUBLIC

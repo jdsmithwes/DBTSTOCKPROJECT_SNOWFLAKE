@@ -107,6 +107,12 @@ yield_curve as (
 
 ),
 
+news_sentiment as (
+
+    select * from {{ ref('int_news_sentiment') }}
+
+),
+
 spine as (
 
     select
@@ -256,6 +262,27 @@ select
     yc.term_premium,
     yc.yield_10y_1d_chg_bps,
 
+    -- Geopolitical / news sentiment signals
+    ns.gdelt_avg_tone,
+    ns.gdelt_conflict_intensity,
+    ns.gdelt_article_volume,
+    ns.gdelt_pct_conflict,
+    ns.gdelt_us_china_tone,
+    ns.gdelt_us_iran_tone,
+    ns.gdelt_us_russia_tone,
+    ns.gdelt_us_europe_tone,
+    ns.gdelt_us_mideast_tone,
+    ns.gdelt_us_apac_tone,
+    ns.av_market_sentiment,
+    ns.av_macro_sentiment,
+    ns.av_monetary_sentiment,
+    ns.av_fiscal_sentiment,
+    ns.av_earnings_sentiment,
+    ns.av_energy_sentiment,
+    ns.av_news_volume,
+    ns.av_bullish_pct,
+    ns.av_bearish_pct,
+
     -- Asset class tag — 'EQUITY' here; 'FIXED_INCOME' in mart_fixed_income
     'EQUITY'                                                   as asset_class,
 
@@ -291,3 +318,5 @@ left join macro_signals ms
     on sp.date = ms.date
 left join yield_curve yc
     on sp.date = yc.date
+left join news_sentiment ns
+    on sp.date = ns.date

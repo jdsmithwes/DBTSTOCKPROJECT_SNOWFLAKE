@@ -672,3 +672,78 @@ models:
         description: Average value of coincident indicators (reflect current economic state)
       - name: avg_lagging_value
         description: Average value of lagging indicators (confirm past economic trends)
+
+  - name: int_news_sentiment
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: daily
+      sla: daily via fetch_gdelt_events.py and fetch_av_news_sentiment.py
+    description: >
+      Daily geopolitical and news sentiment signals anchored to the NYSE trading calendar.
+      Grain: one row per trading date. All joins are LEFT — GDELT gaps (weekends, late publish)
+      and AV news gaps (pre-2022, rate-limit days) produce nulls rather than dropped rows.
+
+      GDELT signals cover US-relevant geopolitical events globally.
+      AV signals cover market/macro/earnings news sentiment from AlphaVantage.
+
+      Asset class boundary: refs only news/geopolitical staging — never equity or fixed income models.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 100
+    columns:
+      - name: date
+        description: NYSE trading date
+        tests: [not_null, unique]
+      - name: gdelt_avg_tone
+        description: Article-weighted mean tone of US-relevant GDELT events (-100 to +100)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 100
+              config:
+                severity: warn
+      - name: gdelt_conflict_intensity
+        description: Article-weighted mean Goldstein scale (-10=max conflict, +10=max cooperation)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 10
+              config:
+                severity: warn
+      - name: gdelt_article_volume
+        description: Total article mentions across US-relevant events (attention / volatility proxy)
+      - name: gdelt_pct_conflict
+        description: Share of events classified as verbal or material conflict (QuadClass 3 or 4)
+      - name: gdelt_us_china_tone
+        description: Bilateral US–China event tone (article-weighted mean)
+      - name: gdelt_us_iran_tone
+        description: Bilateral US–Iran event tone
+      - name: gdelt_us_russia_tone
+        description: Bilateral US–Russia event tone
+      - name: gdelt_us_europe_tone
+        description: US–Europe regional aggregated tone across EU/NATO member events
+      - name: gdelt_us_mideast_tone
+        description: US–Middle East regional aggregated tone (Iran, Saudi Arabia, Israel, Iraq, etc.)
+      - name: gdelt_us_apac_tone
+        description: US–Asia Pacific regional aggregated tone (China, Japan, India, Korea, etc.)
+      - name: av_market_sentiment
+        description: AlphaVantage financial_markets topic mean sentiment score (-1 to +1)
+      - name: av_macro_sentiment
+        description: AlphaVantage economy_macro topic mean sentiment score
+      - name: av_monetary_sentiment
+        description: AlphaVantage economy_monetary topic mean sentiment score (Fed, rates)
+      - name: av_fiscal_sentiment
+        description: AlphaVantage economy_fiscal topic mean sentiment score (govt spending, tax)
+      - name: av_earnings_sentiment
+        description: AlphaVantage earnings topic mean sentiment score (corporate earnings news)
+      - name: av_energy_sentiment
+        description: AlphaVantage energy_transportation topic mean sentiment score
+      - name: av_news_volume
+        description: Total article count across all AV topics for this date
+      - name: av_bullish_pct
+        description: Average share of bullish/somewhat-bullish articles across topics
+      - name: av_bearish_pct
+        description: Average share of bearish/somewhat-bearish articles across topics

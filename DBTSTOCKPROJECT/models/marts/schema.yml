@@ -258,6 +258,46 @@ models:
       - name: econ_indicator_count
         description: Number of distinct indicators contributing to the economic signal on this date
 
+      # --- Geopolitical / news sentiment features ---
+      - name: gdelt_avg_tone
+        description: Article-weighted mean tone of US-relevant GDELT events (-100 to +100); null before GDELT history
+      - name: gdelt_conflict_intensity
+        description: Article-weighted mean Goldstein scale (-10=max conflict, +10=max cooperation)
+      - name: gdelt_article_volume
+        description: Total GDELT article mentions for US-relevant events (attention/volatility proxy)
+      - name: gdelt_pct_conflict
+        description: Share of GDELT events classified as conflictual (QuadClass 3 or 4)
+      - name: gdelt_us_china_tone
+        description: Bilateral US–China event tone (article-weighted); null if no bilateral events that day
+      - name: gdelt_us_iran_tone
+        description: Bilateral US–Iran event tone
+      - name: gdelt_us_russia_tone
+        description: Bilateral US–Russia event tone
+      - name: gdelt_us_europe_tone
+        description: US–Europe regional aggregated event tone (EU/NATO member countries)
+      - name: gdelt_us_mideast_tone
+        description: US–Middle East regional aggregated tone (Iran, Saudi Arabia, Israel, Iraq, etc.)
+      - name: gdelt_us_apac_tone
+        description: US–Asia Pacific regional aggregated tone (China, Japan, India, Korea, etc.)
+      - name: av_market_sentiment
+        description: AlphaVantage financial_markets topic sentiment (-1=very bearish, +1=very bullish); null pre-2022
+      - name: av_macro_sentiment
+        description: AlphaVantage economy_macro topic sentiment
+      - name: av_monetary_sentiment
+        description: AlphaVantage economy_monetary topic sentiment (Fed policy, interest rate news)
+      - name: av_fiscal_sentiment
+        description: AlphaVantage economy_fiscal topic sentiment (government spending, tax news)
+      - name: av_earnings_sentiment
+        description: AlphaVantage earnings topic sentiment — most relevant for ticker-level prediction
+      - name: av_energy_sentiment
+        description: AlphaVantage energy_transportation topic sentiment
+      - name: av_news_volume
+        description: Total article count across all AV topics for this date (attention proxy)
+      - name: av_bullish_pct
+        description: Average share of bullish/somewhat-bullish articles across AV topics
+      - name: av_bearish_pct
+        description: Average share of bearish/somewhat-bearish articles across AV topics
+
       # --- Asset class tag ---
       - name: asset_class
         description: Always 'EQUITY' — use to distinguish from mart_fixed_income ('FIXED_INCOME')

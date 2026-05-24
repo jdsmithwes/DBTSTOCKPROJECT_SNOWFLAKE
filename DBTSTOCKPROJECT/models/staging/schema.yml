@@ -432,6 +432,96 @@ models:
         tests:
           - not_null
 
+  - name: stg_gdelt_events
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: daily
+      sla: daily via fetch_gdelt_events.py
+    description: >
+      Cleaned daily GDELT geopolitical event aggregates filtered to US-relevant events.
+      Grain: one row per calendar date. Deduped on latest load.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 100
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: avg_tone
+        description: Article-weighted mean event tone (-100=very negative, +100=very positive)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 100
+              config:
+                severity: warn
+      - name: conflict_intensity
+        description: Article-weighted mean Goldstein scale (-10=max conflict, +10=max cooperation)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 10
+              config:
+                severity: warn
+      - name: total_articles
+        description: Total article volume for US-relevant events (attention proxy)
+      - name: total_events
+        description: Total event count for US-relevant events
+      - name: pct_conflict
+        description: Share of events with conflictual QuadClass (3=verbal conflict, 4=material conflict)
+      - name: us_china_tone
+        description: Bilateral US–China event tone (article-weighted mean)
+      - name: us_iran_tone
+        description: Bilateral US–Iran event tone
+      - name: us_russia_tone
+        description: Bilateral US–Russia event tone
+      - name: us_europe_tone
+        description: US–Europe regional aggregated tone (covers EU/NATO members)
+      - name: us_mideast_tone
+        description: US–Middle East regional aggregated tone (covers Iran, Saudi Arabia, Israel, etc.)
+      - name: us_apac_tone
+        description: US–Asia Pacific regional aggregated tone (covers China, Japan, India, Korea, etc.)
+
+  - name: stg_av_news_sentiment
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: daily
+      sla: daily via fetch_av_news_sentiment.py
+    description: >
+      Cleaned AlphaVantage news sentiment aggregates by (date, topic).
+      Grain: one row per (date, topic). History starts ~2022-01-01.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date, topic]
+      - min_row_count:
+          min_rows: 10
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: topic
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['financial_markets', 'economy_macro', 'economy_monetary',
+                       'economy_fiscal', 'earnings', 'energy_transportation']
+      - name: avg_sentiment_score
+        description: Mean article sentiment score for this topic on this date (-1=very bearish, +1=very bullish)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1
+              max_value: 1
+              config:
+                severity: warn
+      - name: article_count
+        description: Number of articles contributing to this daily aggregate
+      - name: bullish_pct
+        description: Share of articles labeled Bullish or Somewhat-Bullish
+      - name: bearish_pct
+        description: Share of articles labeled Bearish or Somewhat-Bearish
+
   - name: stg_indicator_metadata
     meta:
       owner: data_engineering
