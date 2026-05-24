@@ -298,6 +298,45 @@ dbt snapshot
 dbt run --profiles-dir ./config --target prod
 ```
 
+### Running dbt with Built-in Lint Gate (`dbt_run.sh`)
+
+All dbt runs should go through `dbt_run.sh` instead of calling `dbt run` directly.
+The script loads credentials from `.env`, executes the dbt run, then runs SQLFluff lint
+as a mandatory final step. Lint violations block the exit so they are caught before
+code reaches `main`.
+
+```bash
+# From DBTSTOCKPROJECT/
+
+# Full run (all models)
+./dbt_run.sh
+
+# Partial run — lint still fires on all models at the end
+./dbt_run.sh --select mart_ml_features
+./dbt_run.sh --full-refresh --select mart_ml_features
+
+# Exit codes:
+#   0  — dbt succeeded + lint clean (safe to merge)
+#   1  — dbt failed   (lint skipped — fix the model first)
+#   2  — dbt succeeded but lint violations found (fix formatting before merging)
+```
+
+**Why this matters:** SQLFluff enforces the project's SQL style contract
+(Snowflake dialect, lowercase keywords, explicit aliases, 120-char line limit).
+Running it after every dbt run means formatting drift is caught at the source,
+not during code review or CI.
+
+**dbt-only commands** (debug, test, docs) still call dbt directly — the wrapper
+is only needed for `dbt run`:
+
+```bash
+dbt debug --profiles-dir .
+dbt test --profiles-dir .
+dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
+```
+
+---
+
 ### Claude Code File Operations (Mac equivalents)
 
 ```bash
