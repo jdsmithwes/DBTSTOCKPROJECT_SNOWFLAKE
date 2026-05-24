@@ -1,4 +1,4 @@
-{{ config(materialized='table') }}
+{{ config(materialized='table', cluster_by=['date']) }}
 
 -- Pivots FRED macro series from long → wide, then forward-fills gaps so every
 -- NYSE trading day has a value (FRED publishes on business days; weekends and

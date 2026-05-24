@@ -151,8 +151,16 @@ models:
         description: Full legal company name
       - name: sector
         description: GICS sector classification
+        tests:
+          - not_null:
+              config:
+                severity: warn
       - name: industry
         description: Industry sub-classification
+        tests:
+          - not_null:
+              config:
+                severity: warn
       - name: country
         description: Country of headquarters
       - name: exchange
@@ -163,6 +171,11 @@ models:
         description: Raw closing price (not adjusted)
       - name: adjusted_close
         description: Closing price adjusted for splits and dividends
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
       - name: volume
         description: Shares traded on this date
       - name: daily_return
@@ -195,6 +208,12 @@ models:
         description: Today's volume / 20-day average volume
       - name: rsi_14
         description: 14-period RSI; <30 oversold, >70 overbought
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              config:
+                severity: warn
 
       # --- Fundamental features ---
       - name: market_capitalization
@@ -368,3 +387,7 @@ models:
         description: True when a complete 12-month forward window exists.
       - name: dataset_split
         description: "'training' when has_3m_target = true; 'inference' for the live prediction window"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['training', 'inference']

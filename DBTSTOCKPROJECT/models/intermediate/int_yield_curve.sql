@@ -1,4 +1,4 @@
-{{ config(materialized='table') }}
+{{ config(materialized='table', cluster_by=['date']) }}
 
 -- Fixed income intermediate model. Asset class boundary: only refs fixed income staging.
 -- Never joins to equity staging or intermediate models — cross-asset joins happen at mart layer only.

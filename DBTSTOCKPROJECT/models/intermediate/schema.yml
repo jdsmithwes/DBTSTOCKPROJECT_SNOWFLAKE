@@ -11,6 +11,7 @@ models:
         description: Stock ticker symbol
         tests:
           - not_null
+          - unique
           - not_empty_string
       - name: analyst_target_price
         description: Consensus analyst price target
@@ -49,6 +50,7 @@ models:
         description: Stock ticker symbol
         tests:
           - not_null
+          - unique
           - not_empty_string
       - name: company_name
         description: Full legal company name
@@ -99,6 +101,7 @@ models:
         description: Stock ticker symbol
         tests:
           - not_null
+          - unique
           - not_empty_string
       - name: market_capitalization
         description: Total market capitalization in USD
@@ -202,6 +205,8 @@ models:
       Daily stock prices joined with company fundamentals and industry-level
       economic leading indicators. Grain is ticker + date + indicator_name.
     tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, date, indicator_name]
       - min_row_count:
           min_rows: 400
       - ohlc_integrity:
@@ -447,6 +452,12 @@ models:
         description: >
           14-period Relative Strength Index using a simple moving average approximation.
           Below 30 = oversold signal, above 70 = overbought signal.
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              config:
+                severity: warn
 
   - name: int_forward_returns
     description: >
@@ -510,23 +521,51 @@ models:
           combination_of_columns: [date]
       - min_row_count:
           min_rows: 1000
+      - recency:
+          timestamp_column: date
+          datepart: day
+          interval: 7
     columns:
       - name: date
         tests: [not_null, unique]
       - name: yield_3m
         description: 3-month Treasury yield (%)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -2
+              max_value: 25
+              config:
+                severity: warn
       - name: yield_2y
         description: 2-year Treasury yield (%)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -2
+              max_value: 25
+              config:
+                severity: warn
       - name: yield_5y
         description: 5-year Treasury yield (%)
       - name: yield_7y
         description: 7-year Treasury yield (%)
       - name: yield_10y
         description: 10-year Treasury yield (%) — benchmark risk-free rate
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -2
+              max_value: 25
+              config:
+                severity: warn
       - name: yield_30y
         description: 30-year Treasury yield (%)
       - name: fed_funds_rate
         description: Effective federal funds rate (%)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 25
+              config:
+                severity: warn
       - name: spread_2s10s
         description: 10y minus 2y yield (pp); negative = inverted curve = elevated recession risk
         tests:
@@ -567,6 +606,10 @@ models:
           combination_of_columns: [date]
       - min_row_count:
           min_rows: 1000
+      - recency:
+          timestamp_column: date
+          datepart: day
+          interval: 7
     columns:
       - name: date
         description: NYSE trading date
