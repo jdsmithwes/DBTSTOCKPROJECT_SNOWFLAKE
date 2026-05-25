@@ -3,7 +3,11 @@
     {%- if custom_schema_name is none -%}
         {{ target.schema | trim }}
     {%- else -%}
-        {{ custom_schema_name | trim }}
+        {%- if target.name in ['prod', 'snowflake'] -%}
+            {{ custom_schema_name | trim }}
+        {%- else -%}
+            DEV_{{ custom_schema_name | trim }}
+        {%- endif -%}
     {%- endif -%}
 
 {%- endmacro %}
