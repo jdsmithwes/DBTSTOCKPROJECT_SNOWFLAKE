@@ -367,6 +367,11 @@ models:
           - not_null
 
   - name: int_ticker_coverage
+    meta:
+      owner: data_engineering
+      tier: operational
+      refresh_frequency: daily
+      sla: daily, before mart_ml_features run
     description: >
       Per-ticker coverage statistics and classification against the NYSE trading calendar.
       Grain: one row per ticker. Used to hard-exclude non-active tickers from mart_ml_features
@@ -429,6 +434,11 @@ models:
               values: ['COMPLETE', 'DELISTED', 'INCOMPLETE']
 
   - name: int_industry_mapping
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: as-needed
+      sla: static seed; update when new sectors/industries appear in stg_companyoverview
     description: >
       Cleaned mapping from company industry labels (AlphaVantage)
       to indicator industry labels (economic data). Each company industry
@@ -450,6 +460,11 @@ models:
           - not_empty_string
 
   - name: int_trading_calendar
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: static reference; refreshes automatically with each dbt run
     description: >
       Every expected NYSE trading day from 2020-01-01 through the most recent
       completed trading day (yesterday, or last Friday if today is Monday).
@@ -466,16 +481,25 @@ models:
           - unique
 
   - name: int_stock_price_features
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
     description: >
       Daily price-derived features for each ticker at (ticker, date) grain.
       All returns use adjusted_close to account for splits and dividends.
       Window functions require sufficient history: RSI needs 14 days, 200-day MA
-      needs 200 days, and 6-month return needs 126 days before values are non-null.
+      needs 200 days, and 12-month return needs 252 days before values are non-null.
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [ticker, date]
       - min_row_count:
           min_rows: 400
+      - recency:
+          timestamp_column: date
+          datepart: day
+          interval: 7
     columns:
       - name: ticker
         description: Stock ticker symbol
@@ -494,6 +518,10 @@ models:
         description: 63-trading-day backward-looking return
       - name: return_6m
         description: 126-trading-day backward-looking return
+      - name: return_9m
+        description: 189-trading-day backward-looking return (momentum signal for 9m forward prediction)
+      - name: return_12m
+        description: 252-trading-day backward-looking return (momentum signal for 12m forward prediction)
       - name: ma_20d
         description: 20-day simple moving average of adjusted close
       - name: ma_50d
@@ -528,6 +556,11 @@ models:
                 severity: warn
 
   - name: int_forward_returns
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
     description: >
       Forward return targets at 1, 3, 6, 9, and 12-month horizons per (ticker, date).
       These are the ML target labels for the retirement stock-picking model.
@@ -538,6 +571,10 @@ models:
           combination_of_columns: [ticker, date]
       - min_row_count:
           min_rows: 400
+      - recency:
+          timestamp_column: date
+          datepart: day
+          interval: 7
     columns:
       - name: ticker
         tests:
@@ -578,11 +615,17 @@ models:
         description: True when a complete 12-month forward window exists.
 
   - name: int_yield_curve
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
     description: >
       US Treasury yield curve pivoted wide, forward-filled to every NYSE trading day,
-      with derived spread signals and rate-of-change metrics.
+      with derived spread signals, rate-of-change metrics, and fed policy regime classification.
       Fixed income asset class boundary: only refs fixed income staging models.
       Cross-asset joins (to equities) happen exclusively at mart layer.
+      fed_regime is computed here and reused by mart_fixed_income and mart_macro_health (DRY).
       Grain: one row per trading date.
     tests:
       - dbt_utils.unique_combination_of_columns:
@@ -662,8 +705,19 @@ models:
         description: CPI index value (forward-filled from monthly release)
       - name: cpi_yoy_pct
         description: Year-over-year CPI change (%), approximated using 252-day lag
+      - name: fed_regime
+        description: "'HIKING', 'CUTTING', or 'NEUTRAL' — 90-day fed funds rate trend; reused by mart_fixed_income and mart_macro_health"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['HIKING', 'CUTTING', 'NEUTRAL']
 
   - name: int_macro_signals
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
     description: >
       Daily macro and risk signals pivoted wide and forward-filled to every NYSE trading day.
       Sources: FRED API (VIX, crude oil, inflation breakeven, HY credit spread).
@@ -726,10 +780,17 @@ models:
                 severity: warn
 
   - name: int_analyst_signals
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: monthly
+      sla: monthly on company overview reload
     description: >
       Derived analyst consensus and ownership signals per ticker.
       Ticker grain — snapshot from the latest company overview load.
       Join to int_stock_price_features on ticker to use as ML features.
+      Note: analyst ratings reflect the most recent snapshot regardless of row date —
+      avoid using for strict point-in-time backtesting without a temporal filter.
     tests:
       - min_row_count:
           min_rows: 400
@@ -752,6 +813,11 @@ models:
         description: percent_insiders + percent_institutions; high values suggest alignment with long-term holders
 
   - name: int_economic_signals
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: monthly
+      sla: monthly on Snowflake Marketplace update
     description: >
       Industry-level economic leading indicator signals aggregated to (indicator_industry, date) grain.
       Resolves the fan-out grain problem in stock_performance_with_indicators, which produces one row

@@ -75,7 +75,15 @@ company_valuation as (
         ebitda,
         ev_to_ebitda,
         ev_to_revenue,
-        beta
+        beta,
+        profit_margin,
+        return_on_equity_ttm,
+        operating_margin_ttm,
+        quarterly_earnings_growth_yoy,
+        quarterly_revenue_growth_yoy,
+        dividend_yield,
+        week_52_high,
+        week_52_low
     from {{ ref('company_overview_valuation') }}
 
 ),
@@ -102,6 +110,8 @@ spine as (
         pf.return_1m,
         pf.return_3m,
         pf.return_6m,
+        pf.return_9m,
+        pf.return_12m,
         pf.ma_20d,
         pf.ma_50d,
         pf.ma_200d,
@@ -136,6 +146,14 @@ spine as (
         cv.ev_to_ebitda,
         cv.ev_to_revenue,
         cv.beta,
+        cv.profit_margin,
+        cv.return_on_equity_ttm,
+        cv.operating_margin_ttm,
+        cv.quarterly_earnings_growth_yoy,
+        cv.quarterly_revenue_growth_yoy,
+        cv.dividend_yield,
+        cv.week_52_high,
+        cv.week_52_low,
 
         -- Analyst signals
         sig.analyst_target_price,
@@ -176,6 +194,8 @@ select
     sp.return_1m,
     sp.return_3m,
     sp.return_6m,
+    sp.return_9m,
+    sp.return_12m,
     sp.ma_20d,
     sp.ma_50d,
     sp.ma_200d,
@@ -204,6 +224,20 @@ select
     sp.ev_to_ebitda,
     sp.ev_to_revenue,
     sp.beta,
+
+    -- Quality factors (Fama-French QMJ style; snapshot from latest overview load)
+    sp.profit_margin,
+    sp.return_on_equity_ttm,
+    sp.operating_margin_ttm,
+    sp.quarterly_earnings_growth_yoy,
+    sp.quarterly_revenue_growth_yoy,
+    sp.dividend_yield,
+
+    -- 52-week momentum / mean-reversion signals
+    sp.week_52_high,
+    sp.week_52_low,
+    case when sp.week_52_high > 0 then sp.adjusted_close / sp.week_52_high end as ratio_to_52w_high,
+    case when sp.week_52_low  > 0 then sp.adjusted_close / sp.week_52_low  end as ratio_to_52w_low,
 
     -- Analyst features
     sp.analyst_target_price,
@@ -276,12 +310,20 @@ select
     fr.has_9m_target,
     fr.has_12m_target,
 
-    -- dataset_split: 'training' when the shortest horizon (3m) has a complete window;
-    -- 'inference' for the most recent ~63 trading days where targets don't exist yet
+    -- Equity Risk Premium: earnings yield minus risk-free rate.
+    -- Positive = equities cheap vs. bonds; negative = equities expensive.
+    -- Null when forward_pe <= 0 (loss-making) or yield_10y is unavailable.
     case
-        when fr.has_3m_target then 'training'
-        else 'inference'
-    end as dataset_split
+        when sp.forward_pe > 0 and yc.yield_10y is not null
+            then (1.0 / sp.forward_pe) - (yc.yield_10y / 100.0)
+    end as equity_risk_premium,
+
+    -- dataset_split: 'training' when the 3m target exists; 'inference' for live prediction window
+    case when fr.has_3m_target  then 'training' else 'inference' end as dataset_split,
+
+    -- Per-horizon splits for models trained at longer horizons
+    case when fr.has_9m_target  then 'training' else 'inference' end as dataset_split_9m,
+    case when fr.has_12m_target then 'training' else 'inference' end as dataset_split_12m
 
 from spine as sp
 left join forward_returns                          as fr  on sp.ticker = fr.ticker and sp.date = fr.date

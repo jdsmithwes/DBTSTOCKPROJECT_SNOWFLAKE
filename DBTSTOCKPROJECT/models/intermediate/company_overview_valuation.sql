@@ -18,6 +18,18 @@ select
     ebitda,
     ev_to_ebitda,
     ev_to_revenue,
-    beta
+    beta,
+
+    -- Quality factors (Fama-French QMJ style)
+    profit_margin,
+    return_on_equity_ttm,
+    operating_margin_ttm,
+    quarterly_earnings_growth_yoy,
+    quarterly_revenue_growth_yoy,
+    dividend_yield,
+
+    -- 52-week price extremes (momentum / mean-reversion signals)
+    week_52_high,
+    week_52_low
 
 from {{ref('stg_companyoverview')}}

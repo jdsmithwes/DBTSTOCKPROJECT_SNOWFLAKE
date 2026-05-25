@@ -353,8 +353,6 @@ models:
                 severity: warn
       - name: country
         description: Country of headquarters
-      - name: exchange
-        description: Listing exchange
 
       # --- Price features ---
       - name: close
@@ -376,6 +374,10 @@ models:
         description: 63-trading-day backward-looking return
       - name: return_6m
         description: 126-trading-day backward-looking return
+      - name: return_9m
+        description: 189-trading-day backward-looking return (momentum signal for 9m prediction horizon)
+      - name: return_12m
+        description: 252-trading-day backward-looking return (momentum signal for 12m prediction horizon)
       - name: ma_20d
         description: 20-day simple moving average of adjusted close
       - name: ma_50d
@@ -436,6 +438,52 @@ models:
         description: Enterprise value / Revenue
       - name: beta
         description: Market beta; 1.0 = moves in line with S&P 500
+
+      # --- Quality factors ---
+      - name: profit_margin
+        description: Net profit margin as decimal (snapshot); higher = better quality
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 1
+              config:
+                severity: warn
+      - name: return_on_equity_ttm
+        description: Return on equity TTM as decimal; Buffett-style quality signal
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -50
+              max_value: 50
+              config:
+                severity: warn
+      - name: operating_margin_ttm
+        description: Operating margin TTM as decimal; operational efficiency signal
+      - name: quarterly_earnings_growth_yoy
+        description: Year-over-year quarterly earnings growth rate; earnings momentum signal
+      - name: quarterly_revenue_growth_yoy
+        description: Year-over-year quarterly revenue growth rate; top-line momentum
+      - name: dividend_yield
+        description: Annual dividend yield as decimal (e.g., 0.03 = 3%); income and quality signal
+
+      # --- 52-week price extremes ---
+      - name: week_52_high
+        description: 52-week price high from AlphaVantage overview (snapshot)
+      - name: week_52_low
+        description: 52-week price low from AlphaVantage overview (snapshot)
+      - name: ratio_to_52w_high
+        description: >
+          adjusted_close / week_52_high. Values near 1.0 = price near its 52-week high (momentum).
+          Values near 0 = deep discount from high (mean reversion opportunity or distress signal).
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 2
+              config:
+                severity: warn
+      - name: ratio_to_52w_low
+        description: >
+          adjusted_close / week_52_low. Values near 1.0 = price near its 52-week low.
+          High values indicate the stock has recovered significantly from its trough.
 
       # --- Analyst features ---
       - name: analyst_target_price
@@ -575,8 +623,37 @@ models:
         description: True when a complete 9-month forward window exists.
       - name: has_12m_target
         description: True when a complete 12-month forward window exists.
+      - name: equity_risk_premium
+        description: >
+          (1 / forward_pe) - (yield_10y / 100). Earnings yield minus the risk-free rate.
+          Positive = equities offer a premium over bonds (historically bullish for stocks).
+          Negative = bonds offer better risk-adjusted returns (historically a headwind for equities).
+          Null when forward_pe <= 0 (loss-making companies) or yield_10y is unavailable.
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -0.5
+              max_value: 0.5
+              config:
+                severity: warn
+
       - name: dataset_split
         description: "'training' when has_3m_target = true; 'inference' for the live prediction window"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['training', 'inference']
+      - name: dataset_split_9m
+        description: >
+          Per-horizon split for 9-month prediction models. 'training' when has_9m_target = true
+          (requires ~9 months of future price data to exist). 'inference' for the most recent ~189 trading days.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['training', 'inference']
+      - name: dataset_split_12m
+        description: >
+          Per-horizon split for 12-month prediction models. 'training' when has_12m_target = true
+          (requires ~12 months of future price data). 'inference' for the most recent ~252 trading days.
         tests:
           - not_null
           - accepted_values:

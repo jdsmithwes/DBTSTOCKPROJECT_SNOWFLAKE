@@ -27,7 +27,8 @@ with yield_curve as (
         date,
         fed_funds_rate,
         cpi_value,
-        cpi_yoy_pct
+        cpi_yoy_pct,
+        fed_regime
     from {{ ref('int_yield_curve') }}
 
 ),
@@ -46,8 +47,7 @@ with_regime as (
 
     select
         yc.*,
-        cm.cpi_mom_pct,
-        lag(yc.fed_funds_rate, 90) over (order by yc.date) as fed_funds_90d_ago
+        cm.cpi_mom_pct
 
     from yield_curve as yc
     left join cpi_mom as cm
@@ -80,12 +80,8 @@ select
             then cpi_yoy_pct - 2.0
     end as inflation_vs_target,
 
-    -- Fed policy direction based on 90-day rate trend
-    case
-        when fed_funds_rate > coalesce(fed_funds_90d_ago, fed_funds_rate) + 0.10 then 'HIKING'
-        when fed_funds_rate < coalesce(fed_funds_90d_ago, fed_funds_rate) - 0.10 then 'CUTTING'
-        else 'NEUTRAL'
-    end as fed_regime,
+    -- Fed policy direction based on 90-day rate trend (computed in int_yield_curve)
+    fed_regime,
 
     -- Inflation severity relative to the Fed's 2% mandate
     case
@@ -121,11 +117,11 @@ select
     case
         when cpi_yoy_pct is null then null
         when cpi_yoy_pct > 5.0
-             and fed_funds_rate <= coalesce(fed_funds_90d_ago, fed_funds_rate) + 0.10 then 'STAGFLATION RISK'
+             and fed_regime != 'HIKING'                                                then 'STAGFLATION RISK'
         when cpi_yoy_pct > 3.0
-             and fed_funds_rate > coalesce(fed_funds_90d_ago, fed_funds_rate) + 0.10  then 'OVERHEATING — Fed hiking'
+             and fed_regime = 'HIKING'                                                 then 'OVERHEATING — Fed hiking'
         when cpi_yoy_pct < 1.0
-             and fed_funds_rate < coalesce(fed_funds_90d_ago, fed_funds_rate) - 0.10  then 'DEFLATION RISK — Fed cutting'
+             and fed_regime = 'CUTTING'                                                then 'DEFLATION RISK — Fed cutting'
         when cpi_yoy_pct between 2.0 and 3.0
              and (fed_funds_rate - cpi_yoy_pct) > 0.5                                 then 'NORMALIZING — restrictive policy working'
         when cpi_yoy_pct <= 3.0

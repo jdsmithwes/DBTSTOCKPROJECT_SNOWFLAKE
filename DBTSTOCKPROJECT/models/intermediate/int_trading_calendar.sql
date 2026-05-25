@@ -9,7 +9,7 @@
 with date_spine as (
 
     select dateadd('day', seq4(), '2020-01-01'::date) as calendar_date
-    from table(generator(rowcount => 3000))
+    from table(generator(rowcount => 5000))
 
 ),
 

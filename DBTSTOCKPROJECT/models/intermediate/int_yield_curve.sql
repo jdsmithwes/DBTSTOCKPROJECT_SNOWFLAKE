@@ -98,7 +98,17 @@ forward_filled as (
 
 ),
 
--- Derive curve shape signals and rate-of-change metrics
+-- Compute 90-day lag for fed regime classification
+with_regime as (
+
+    select
+        *,
+        lag(fed_funds_rate, 90) over (order by date) as fed_funds_90d_ago
+    from forward_filled
+
+),
+
+-- Derive curve shape signals, rate-of-change metrics, and fed policy regime
 with_signals as (
 
     select
@@ -113,10 +123,10 @@ with_signals as (
         cpi_value,
 
         -- Curve spread signals (in percentage points)
-        yield_10y - yield_2y as spread_2s10s,    -- classic recession leading indicator
-        yield_10y - yield_3m as spread_3m10y,    -- Fed's preferred recession signal
-        yield_30y - yield_2y as spread_2s30s,    -- long-end demand signal
-        yield_10y - fed_funds_rate as term_premium,    -- compensation for duration risk
+        yield_10y - yield_2y as spread_2s10s,
+        yield_10y - yield_3m as spread_3m10y,
+        yield_30y - yield_2y as spread_2s30s,
+        yield_10y - fed_funds_rate as term_premium,
 
         -- Inversion flags (negative spread = inverted = recession risk elevated)
         coalesce((yield_10y - yield_2y) < 0, FALSE) as is_2s10s_inverted,
@@ -131,9 +141,16 @@ with_signals as (
         case
             when lag(cpi_value, 252) over (order by date) > 0
                 then (cpi_value / lag(cpi_value, 252) over (order by date) - 1) * 100
-        end as cpi_yoy_pct
+        end as cpi_yoy_pct,
 
-    from forward_filled
+        -- Fed policy regime based on 90-day rate trend (shared by mart_fixed_income + mart_macro_health)
+        case
+            when fed_funds_rate > coalesce(fed_funds_90d_ago, fed_funds_rate) + 0.10 then 'HIKING'
+            when fed_funds_rate < coalesce(fed_funds_90d_ago, fed_funds_rate) - 0.10 then 'CUTTING'
+            else 'NEUTRAL'
+        end as fed_regime
+
+    from with_regime
 
 )
 

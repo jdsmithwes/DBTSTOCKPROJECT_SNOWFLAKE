@@ -38,28 +38,11 @@ with yield_curve as (
 
 ),
 
--- Classify Fed policy regime by comparing current rate to 90 days ago
-with_regime as (
-
-    select
-        *,
-        lag(fed_funds_rate, 90) over (order by date) as fed_funds_90d_ago
-
-    from yield_curve
-
-),
-
--- Compute date-level derived signals; all carry through to every security row
+-- Compute date-level derived signals; fed_regime sourced from int_yield_curve
 with_signals as (
 
     select
         *,
-
-        case
-            when fed_funds_rate > coalesce(fed_funds_90d_ago, fed_funds_rate) + 0.10 then 'HIKING'
-            when fed_funds_rate < coalesce(fed_funds_90d_ago, fed_funds_rate) - 0.10 then 'CUTTING'
-            else 'NEUTRAL'
-        end as fed_regime,
 
         sum(case when is_2s10s_inverted then 1 else 0 end) over (
             order by date
@@ -73,7 +56,7 @@ with_signals as (
 
         coalesce(yield_10y >= 4.0, FALSE) as fi_attractive_flag
 
-    from with_regime
+    from yield_curve
 
 ),
 
