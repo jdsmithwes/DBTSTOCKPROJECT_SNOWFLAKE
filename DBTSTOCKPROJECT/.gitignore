@@ -1,0 +1,13 @@
+# Ignore dbt artifacts
+target/
+dbt_modules/
+logs/
+Untitled1.sql
+demo.sql
+dbt_internal_packages/
+untitled 1.sql
+untitled 2.sql
+untitled 3.sql
+
+# Secrets
+.env

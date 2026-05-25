@@ -1,0 +1,926 @@
+version: 2
+
+models:
+  - name: company_overview_analystrating
+    description: Analyst rating counts and consensus target price per ticker
+    tests:
+      - min_row_count:
+          min_rows: 400
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - unique
+          - not_empty_string
+      - name: analyst_target_price
+        description: Consensus analyst price target
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: analyst_rating_strong_buy
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_buy
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_hold
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_sell
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_strong_sell
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+  - name: company_overview_nonfinancial
+    description: Non-financial company attributes — sector, industry, geography
+    tests:
+      - min_row_count:
+          min_rows: 400
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - unique
+          - not_empty_string
+      - name: company_name
+        description: Full legal company name
+        tests:
+          - not_null
+          - not_empty_string
+      - name: sector
+        description: GICS sector classification
+        tests:
+          - not_null
+          - not_empty_string
+      - name: industry
+        description: Industry sub-classification
+        tests:
+          - not_null
+          - not_empty_string
+      - name: country
+        description: Country of headquarters
+        tests:
+          - not_null
+          - not_empty_string
+      - name: currency
+        description: Trading currency
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['USD', 'CAD', 'EUR', 'GBP', 'HKD', 'JPY', 'AUD']
+              config:
+                severity: warn
+      - name: fiscal_year_end
+        description: Month in which the company's fiscal year ends
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['January', 'February', 'March', 'April', 'May', 'June',
+                       'July', 'August', 'September', 'October', 'November', 'December']
+
+  - name: company_overview_valuation
+    description: Valuation multiples and capital structure metrics per ticker
+    tests:
+      - min_row_count:
+          min_rows: 400
+      - column_gte_column:
+          column_a: shares_outstanding
+          column_b: shares_float
+          config:
+            severity: warn
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - unique
+          - not_empty_string
+      - name: market_capitalization
+        description: Total market capitalization in USD
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: shares_outstanding
+        description: Total shares outstanding
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: shares_float
+        description: Publicly tradable float shares (must not exceed shares outstanding)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: diluted_eps_ttm
+        description: Diluted EPS on trailing twelve months
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1000
+              max_value: 10000
+              config:
+                severity: warn
+      - name: pe_ratio
+        description: Price-to-earnings ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -500
+              max_value: 5000
+              config:
+                severity: warn
+      - name: trailing_pe
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -500
+              max_value: 5000
+              config:
+                severity: warn
+      - name: forward_pe
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -500
+              max_value: 5000
+              config:
+                severity: warn
+      - name: peg_ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 100
+              config:
+                severity: warn
+      - name: price_to_book_ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -50
+              max_value: 500
+              config:
+                severity: warn
+      - name: revenue_ttm
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: ebitda
+        description: EBITDA; may be negative for unprofitable companies
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1000000000000
+              max_value: 1000000000000
+              config:
+                severity: warn
+      - name: ev_to_ebitda
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 1000
+              config:
+                severity: warn
+      - name: ev_to_revenue
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 500
+              config:
+                severity: warn
+      - name: beta
+        description: Market beta; 1.0 = moves in line with market
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 20
+              config:
+                severity: warn
+
+  - name: stock_performance_with_indicators
+    description: >
+      Daily stock prices joined with company fundamentals and industry-level
+      economic leading indicators. Grain is ticker + date + indicator_name.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, date, indicator_name]
+      - min_row_count:
+          min_rows: 400
+      - ohlc_integrity:
+          high_col: high
+          low_col: low
+          open_col: open
+          close_col: close
+      - no_future_date:
+          column_name: date
+      - no_weekend_date:
+          column_name: date
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - not_empty_string
+      - name: date
+        description: Trading date
+        tests:
+          - not_null
+      - name: open
+        description: Opening price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: high
+        description: Intraday high price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: low
+        description: Intraday low price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: close
+        description: Closing price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: adjusted_close
+        description: Closing price adjusted for splits and dividends
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: volume
+        description: Shares traded
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: company_name
+        description: Full legal company name
+        tests:
+          - not_null
+      - name: sector
+        description: GICS sector
+        tests:
+          - not_null
+      - name: exchange
+        tests:
+          - not_null
+      - name: beta
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 20
+              config:
+                severity: warn
+      - name: pe_ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -500
+              max_value: 5000
+              config:
+                severity: warn
+      - name: market_capitalization
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: percent_insiders
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: percent_institutions
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              config:
+                severity: warn
+      - name: indicator_value
+        description: Numeric value of the economic indicator on this date
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1000000
+              max_value: 1000000
+              config:
+                severity: warn
+
+  - name: industry_indicators_descriptions
+    description: >
+      Economic indicator metadata joined with time series values.
+      Grain is indicator name + date.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - name
+            - date
+          config:
+            severity: warn
+      - min_row_count:
+          min_rows: 100
+      - no_future_date:
+          column_name: date
+    columns:
+      - name: name
+        description: Indicator name
+        tests:
+          - not_null
+          - not_empty_string
+      - name: classification
+        description: Leading, lagging, or coincident
+        tests:
+          - not_null
+          - not_empty_string
+      - name: units
+        description: Unit of measurement
+        tests:
+          - not_null
+      - name: industrylist
+        description: Comma-separated list of applicable industries
+        tests:
+          - not_null
+          - not_empty_string
+      - name: value
+        description: Observed indicator value
+        tests:
+          - not_null
+      - name: date
+        description: Observation date
+        tests:
+          - not_null
+
+  - name: int_ticker_coverage
+    meta:
+      owner: data_engineering
+      tier: operational
+      refresh_frequency: daily
+      sla: daily, before mart_ml_features run
+    description: >
+      Per-ticker coverage statistics and classification against the NYSE trading calendar.
+      Grain: one row per ticker. Used to hard-exclude non-active tickers from mart_ml_features
+      and to populate mart_delisted_tickers.
+
+      coverage_status values:
+        COMPLETE   — last_date within 14 calendar days of dataset end AND coverage_pct >= 95%
+        DELISTED   — last_date more than 63 calendar days behind dataset end
+        INCOMPLETE — everything else (new entrants, data gaps, gray zone)
+    tests:
+      - min_row_count:
+          min_rows: 400
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - unique
+          - not_empty_string
+      - name: first_date
+        description: Earliest trading date present in stg_stockprice for this ticker
+        tests:
+          - not_null
+      - name: last_date
+        description: Most recent trading date present in stg_stockprice for this ticker
+        tests:
+          - not_null
+      - name: trading_days_loaded
+        description: Actual row count in stg_stockprice for this ticker
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+      - name: expected_trading_days
+        description: NYSE trading days from first_date to dataset_end_date (from int_trading_calendar)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+      - name: coverage_pct
+        description: trading_days_loaded / expected_trading_days; 1.0 = no gaps
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+              config:
+                severity: warn
+      - name: calendar_days_since_last_trade
+        description: Calendar days between last_date and dataset_end_date
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: dataset_end_date
+        description: Max trading date from int_trading_calendar (the reference "today" for coverage checks)
+        tests:
+          - not_null
+      - name: coverage_status
+        description: "COMPLETE, DELISTED, or INCOMPLETE — see model description for thresholds"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['COMPLETE', 'DELISTED', 'INCOMPLETE']
+
+  - name: int_industry_mapping
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: as-needed
+      sla: static seed; update when new sectors/industries appear in stg_companyoverview
+    description: >
+      Cleaned mapping from company industry labels (AlphaVantage)
+      to indicator industry labels (economic data). Each company industry
+      maps to exactly one indicator industry.
+    tests:
+      - min_row_count:
+          min_rows: 1
+    columns:
+      - name: company_industry
+        description: Uppercased company industry label from AlphaVantage
+        tests:
+          - not_null
+          - unique
+          - not_empty_string
+      - name: indicator_industry
+        description: Corresponding indicator industry label
+        tests:
+          - not_null
+          - not_empty_string
+
+  - name: int_trading_calendar
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: static reference; refreshes automatically with each dbt run
+    description: >
+      Every expected NYSE trading day from 2020-01-01 through the most recent
+      completed trading day (yesterday, or last Friday if today is Monday).
+      Weekends and US market holidays (seed: us_market_holidays) are excluded.
+      Used as the date spine in mart_data_gaps.
+    tests:
+      - min_row_count:
+          min_rows: 1000
+    columns:
+      - name: trading_date
+        description: A valid NYSE trading day
+        tests:
+          - not_null
+          - unique
+
+  - name: int_stock_price_features
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
+    description: >
+      Daily price-derived features for each ticker at (ticker, date) grain.
+      All returns use adjusted_close to account for splits and dividends.
+      Window functions require sufficient history: RSI needs 14 days, 200-day MA
+      needs 200 days, and 12-month return needs 252 days before values are non-null.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, date]
+      - min_row_count:
+          min_rows: 400
+      - recency:
+          timestamp_column: date
+          datepart: day
+          interval: 7
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - not_empty_string
+      - name: date
+        description: Trading date
+        tests:
+          - not_null
+      - name: daily_return
+        description: Percentage return from the prior trading day's adjusted close
+      - name: return_1m
+        description: 21-trading-day backward-looking return
+      - name: return_3m
+        description: 63-trading-day backward-looking return
+      - name: return_6m
+        description: 126-trading-day backward-looking return
+      - name: return_9m
+        description: 189-trading-day backward-looking return (momentum signal for 9m forward prediction)
+      - name: return_12m
+        description: 252-trading-day backward-looking return (momentum signal for 12m forward prediction)
+      - name: ma_20d
+        description: 20-day simple moving average of adjusted close
+      - name: ma_50d
+        description: 50-day simple moving average of adjusted close
+      - name: ma_200d
+        description: 200-day simple moving average of adjusted close
+      - name: bollinger_pct_b
+        description: >
+          Bollinger Band %B: (price - 20d MA) / (2 * 20d stddev).
+          0.5 = midline, >1 = above upper band, <0 = below lower band.
+      - name: price_to_ma_20d
+        description: Ratio of adjusted close to 20-day MA; >1 means price is above the average
+      - name: price_to_ma_50d
+        description: Ratio of adjusted close to 50-day MA
+      - name: price_to_ma_200d
+        description: Ratio of adjusted close to 200-day MA
+      - name: volatility_20d
+        description: 20-day rolling standard deviation of daily returns (realized volatility)
+      - name: volatility_60d
+        description: 60-day rolling standard deviation of daily returns
+      - name: volume_ratio_20d
+        description: Today's volume divided by 20-day average volume; >1 = above-average activity
+      - name: rsi_14
+        description: >
+          14-period Relative Strength Index using a simple moving average approximation.
+          Below 30 = oversold signal, above 70 = overbought signal.
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              config:
+                severity: warn
+
+  - name: int_forward_returns
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
+    description: >
+      Forward return targets at 1, 3, 6, 9, and 12-month horizons per (ticker, date).
+      These are the ML target labels for the retirement stock-picking model.
+      Use has_3m_target = true to filter to rows with a complete 3-month forward window.
+      Longer horizons (6m, 9m, 12m) will be null for more recent rows.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, date]
+      - min_row_count:
+          min_rows: 400
+      - recency:
+          timestamp_column: date
+          datepart: day
+          interval: 7
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+          - not_empty_string
+      - name: date
+        tests:
+          - not_null
+      - name: forward_return_1m
+        description: >
+          (adjusted_close 21 trading days later / adjusted_close today) - 1.
+          Null for the most recent ~21 trading days.
+      - name: forward_return_3m
+        description: >
+          Primary ML target: (adjusted_close 63 trading days later / adjusted_close today) - 1.
+          Null for the most recent ~63 trading days.
+      - name: forward_return_6m
+        description: >
+          (adjusted_close 126 trading days later / adjusted_close today) - 1.
+          Null for the most recent ~6 months.
+      - name: forward_return_9m
+        description: >
+          (adjusted_close 189 trading days later / adjusted_close today) - 1.
+          Null for the most recent ~9 months.
+      - name: forward_return_12m
+        description: >
+          (adjusted_close 252 trading days later / adjusted_close today) - 1.
+          Null for the most recent ~12 months.
+      - name: has_1m_target
+        description: True when a complete 1-month forward window exists.
+      - name: has_3m_target
+        description: True when a complete 3-month forward window exists.
+      - name: has_6m_target
+        description: True when a complete 6-month forward window exists.
+      - name: has_9m_target
+        description: True when a complete 9-month forward window exists.
+      - name: has_12m_target
+        description: True when a complete 12-month forward window exists.
+
+  - name: int_yield_curve
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
+    description: >
+      US Treasury yield curve pivoted wide, forward-filled to every NYSE trading day,
+      with derived spread signals, rate-of-change metrics, and fed policy regime classification.
+      Fixed income asset class boundary: only refs fixed income staging models.
+      Cross-asset joins (to equities) happen exclusively at mart layer.
+      fed_regime is computed here and reused by mart_fixed_income and mart_macro_health (DRY).
+      Grain: one row per trading date.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 1000
+      - recency:
+          timestamp_column: date
+          datepart: day
+          interval: 7
+    columns:
+      - name: date
+        tests: [not_null, unique]
+      - name: yield_3m
+        description: 3-month Treasury yield (%)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -2
+              max_value: 25
+              config:
+                severity: warn
+      - name: yield_2y
+        description: 2-year Treasury yield (%)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -2
+              max_value: 25
+              config:
+                severity: warn
+      - name: yield_5y
+        description: 5-year Treasury yield (%)
+      - name: yield_7y
+        description: 7-year Treasury yield (%)
+      - name: yield_10y
+        description: 10-year Treasury yield (%) — benchmark risk-free rate
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -2
+              max_value: 25
+              config:
+                severity: warn
+      - name: yield_30y
+        description: 30-year Treasury yield (%)
+      - name: fed_funds_rate
+        description: Effective federal funds rate (%)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 25
+              config:
+                severity: warn
+      - name: spread_2s10s
+        description: 10y minus 2y yield (pp); negative = inverted curve = elevated recession risk
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -5
+              max_value: 10
+              config:
+                severity: warn
+      - name: spread_3m10y
+        description: 10y minus 3m yield (pp); Fed's preferred inversion metric
+      - name: spread_2s30s
+        description: 30y minus 2y yield (pp); long-end demand signal
+      - name: term_premium
+        description: 10y yield minus fed funds rate (pp); duration risk compensation
+      - name: is_2s10s_inverted
+        description: True when 2s10s spread is negative
+      - name: is_3m10y_inverted
+        description: True when 3m10y spread is negative
+      - name: yield_10y_1d_chg_bps
+        description: 1-day change in 10y yield in basis points
+      - name: yield_10y_5d_chg_bps
+        description: 5-day change in 10y yield in basis points
+      - name: yield_2y_1d_chg_bps
+        description: 1-day change in 2y yield in basis points
+      - name: cpi_value
+        description: CPI index value (forward-filled from monthly release)
+      - name: cpi_yoy_pct
+        description: Year-over-year CPI change (%), approximated using 252-day lag
+      - name: fed_regime
+        description: "'HIKING', 'CUTTING', or 'NEUTRAL' — 90-day fed funds rate trend; reused by mart_fixed_income and mart_macro_health"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['HIKING', 'CUTTING', 'NEUTRAL']
+
+  - name: int_macro_signals
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
+    description: >
+      Daily macro and risk signals pivoted wide and forward-filled to every NYSE trading day.
+      Sources: FRED API (VIX, crude oil, inflation breakeven, HY credit spread).
+      Forward-fill ensures no null gaps in the ML feature matrix.
+      Grain: one row per trading_date.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 1000
+      - recency:
+          timestamp_column: date
+          datepart: day
+          interval: 7
+    columns:
+      - name: date
+        description: NYSE trading date
+        tests:
+          - not_null
+          - unique
+      - name: vix
+        description: CBOE Volatility Index — market fear gauge; >30 signals elevated risk
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 200
+              config:
+                severity: warn
+      - name: oil_price_wti
+        description: WTI crude oil spot price in USD/barrel
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 500
+              config:
+                severity: warn
+      - name: oil_price_brent
+        description: Brent crude oil spot price in USD/barrel
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 500
+              config:
+                severity: warn
+      - name: inflation_breakeven_10y
+        description: 10-year breakeven inflation rate (%) — market inflation expectations
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -5
+              max_value: 15
+              config:
+                severity: warn
+      - name: hy_credit_spread
+        description: ICE BofA US HY option-adjusted spread (%) — credit stress indicator; spikes during crises
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 50
+              config:
+                severity: warn
+
+  - name: int_analyst_signals
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: monthly
+      sla: monthly on company overview reload
+    description: >
+      Derived analyst consensus and ownership signals per ticker.
+      Ticker grain — snapshot from the latest company overview load.
+      Join to int_stock_price_features on ticker to use as ML features.
+      Note: analyst ratings reflect the most recent snapshot regardless of row date —
+      avoid using for strict point-in-time backtesting without a temporal filter.
+    tests:
+      - min_row_count:
+          min_rows: 400
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+          - unique
+          - not_empty_string
+      - name: net_bullish_score
+        description: >
+          Weighted analyst consensus normalized to [-2, +2].
+          Strong buy = +2, buy = +1, sell = -1, strong sell = -2, hold = 0.
+          Positive values = net bullish; null if no ratings exist.
+      - name: analyst_upside
+        description: >
+          (analyst_target_price / latest_close) - 1.
+          How far analysts expect the price to move from the current level.
+      - name: total_aligned_ownership_pct
+        description: percent_insiders + percent_institutions; high values suggest alignment with long-term holders
+
+  - name: int_economic_signals
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: monthly
+      sla: monthly on Snowflake Marketplace update
+    description: >
+      Industry-level economic leading indicator signals aggregated to (indicator_industry, date) grain.
+      Resolves the fan-out grain problem in stock_performance_with_indicators, which produces one row
+      per (ticker, date, indicator_name). This model collapses to one row per (indicator_industry, date)
+      for clean joining to the price spine. Economic data is typically monthly, so trading-day joins
+      will produce nulls on non-reporting dates — forward-fill in downstream ML preprocessing.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [indicator_industry, date]
+      - min_row_count:
+          min_rows: 10
+    columns:
+      - name: indicator_industry
+        description: Economic industry label (from Snowflake Marketplace data)
+        tests:
+          - not_null
+          - not_empty_string
+      - name: date
+        description: Observation date for this set of indicator values
+        tests:
+          - not_null
+      - name: indicator_count
+        description: Number of distinct indicators contributing to this industry-date row
+      - name: economic_activity_index
+        description: Simple average across all applicable economic indicators for this industry and date
+      - name: avg_leading_value
+        description: Average value of leading indicators (predict future economic direction)
+      - name: avg_coincident_value
+        description: Average value of coincident indicators (reflect current economic state)
+      - name: avg_lagging_value
+        description: Average value of lagging indicators (confirm past economic trends)
+
+  - name: int_news_sentiment
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: daily
+      sla: daily via fetch_gdelt_events.py and fetch_av_news_sentiment.py
+    description: >
+      Daily geopolitical and news sentiment signals anchored to the NYSE trading calendar.
+      Grain: one row per trading date. All joins are LEFT — GDELT gaps (weekends, late publish)
+      and AV news gaps (pre-2022, rate-limit days) produce nulls rather than dropped rows.
+
+      GDELT signals cover US-relevant geopolitical events globally.
+      AV signals cover market/macro/earnings news sentiment from AlphaVantage.
+
+      Asset class boundary: refs only news/geopolitical staging — never equity or fixed income models.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 100
+    columns:
+      - name: date
+        description: NYSE trading date
+        tests: [not_null, unique]
+      - name: gdelt_avg_tone
+        description: Article-weighted mean tone of US-relevant GDELT events (-100 to +100)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 100
+              config:
+                severity: warn
+      - name: gdelt_conflict_intensity
+        description: Article-weighted mean Goldstein scale (-10=max conflict, +10=max cooperation)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 10
+              config:
+                severity: warn
+      - name: gdelt_article_volume
+        description: Total article mentions across US-relevant events (attention / volatility proxy)
+      - name: gdelt_pct_conflict
+        description: Share of events classified as verbal or material conflict (QuadClass 3 or 4)
+      - name: gdelt_us_china_tone
+        description: Bilateral US–China event tone (article-weighted mean)
+      - name: gdelt_us_iran_tone
+        description: Bilateral US–Iran event tone
+      - name: gdelt_us_russia_tone
+        description: Bilateral US–Russia event tone
+      - name: gdelt_us_europe_tone
+        description: US–Europe regional aggregated tone across EU/NATO member events
+      - name: gdelt_us_mideast_tone
+        description: US–Middle East regional aggregated tone (Iran, Saudi Arabia, Israel, Iraq, etc.)
+      - name: gdelt_us_apac_tone
+        description: US–Asia Pacific regional aggregated tone (China, Japan, India, Korea, etc.)
+      - name: av_market_sentiment
+        description: AlphaVantage financial_markets topic mean sentiment score (-1 to +1)
+      - name: av_macro_sentiment
+        description: AlphaVantage economy_macro topic mean sentiment score
+      - name: av_monetary_sentiment
+        description: AlphaVantage economy_monetary topic mean sentiment score (Fed, rates)
+      - name: av_fiscal_sentiment
+        description: AlphaVantage economy_fiscal topic mean sentiment score (govt spending, tax)
+      - name: av_earnings_sentiment
+        description: AlphaVantage earnings topic mean sentiment score (corporate earnings news)
+      - name: av_energy_sentiment
+        description: AlphaVantage energy_transportation topic mean sentiment score
+      - name: av_news_volume
+        description: Total article count across all AV topics for this date
+      - name: av_bullish_pct
+        description: Average share of bullish/somewhat-bullish articles across topics
+      - name: av_bearish_pct
+        description: Average share of bearish/somewhat-bearish articles across topics

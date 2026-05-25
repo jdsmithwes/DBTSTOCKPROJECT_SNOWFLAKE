@@ -1,0 +1,601 @@
+version: 2
+
+models:
+  - name: stg_stockprice
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
+    description: Staged daily OHLCV stock price data from AlphaVantage API
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - ticker
+            - date
+      - min_row_count:
+          min_rows: 400
+      - recency:
+          timestamp_column: date
+          datepart: day
+          interval: 14
+      - ohlc_integrity:
+          high_col: high
+          low_col: low
+          open_col: open
+          close_col: close
+      - no_future_date:
+          column_name: date
+      - no_weekend_date:
+          column_name: date
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - not_empty_string
+      - name: date
+        description: Trading date (market calendar date)
+        tests:
+          - not_null
+      - name: open
+        description: Opening price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: high
+        description: Intraday high price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: low
+        description: Intraday low price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: close
+        description: Closing price
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: adjusted_close
+        description: Closing price adjusted for splits and dividends
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: volume
+        description: Number of shares traded
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: dividend_amount
+        description: Dividend amount paid on this date, if any
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: split_coefficient
+        description: Stock split coefficient; 1.0 means no split occurred
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+
+  - name: stg_companyoverview
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: monthly
+      sla: monthly on load
+    description: Staged company fundamentals and metadata from AlphaVantage API
+    tests:
+      - recency:
+          timestamp_column: load_timestamp
+          datepart: month
+          interval: 3
+          config:
+            severity: warn
+      - min_row_count:
+          min_rows: 400
+      - column_gte_column:
+          column_a: week_52_high
+          column_b: week_52_low
+      - column_gte_column:
+          column_a: shares_outstanding
+          column_b: shares_float
+          config:
+            severity: warn
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - not_empty_string
+      - name: symbol
+        description: Exchange symbol (may differ from ticker for some listings)
+        tests:
+          - not_null
+      - name: company_name
+        description: Full legal company name
+        tests:
+          - not_null
+          - not_empty_string
+      - name: exchange
+        description: Listing exchange
+        tests:
+          - not_null
+          - not_empty_string
+          - accepted_values:
+              values: ['NYSE', 'NASDAQ', 'AMEX', 'NYSE ARCA', 'NYSE MKT', 'BATS', 'OTC', 'CBOE']
+              config:
+                severity: warn
+      - name: currency
+        description: Trading currency
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['USD', 'CAD', 'EUR', 'GBP', 'HKD', 'JPY', 'AUD']
+              config:
+                severity: warn
+      - name: sector
+        description: GICS sector classification
+        tests:
+          - not_null
+          - not_empty_string
+      - name: market_capitalization
+        description: Total market capitalization in USD
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: shares_outstanding
+        description: Total shares outstanding
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: shares_float
+        description: Publicly tradable float shares
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: pe_ratio
+        description: Price-to-earnings ratio; may be negative for loss-making companies
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -500
+              max_value: 5000
+              config:
+                severity: warn
+      - name: trailing_pe
+        description: Trailing twelve-month P/E ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -500
+              max_value: 5000
+              config:
+                severity: warn
+      - name: forward_pe
+        description: Forward P/E ratio based on analyst estimates
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -500
+              max_value: 5000
+              config:
+                severity: warn
+      - name: peg_ratio
+        description: Price/earnings-to-growth ratio
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 100
+              config:
+                severity: warn
+      - name: beta
+        description: Market beta; 1.0 = moves with market
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 20
+              config:
+                severity: warn
+      - name: profit_margin
+        description: Net profit margin as decimal (e.g., 0.25 = 25%)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 1
+              config:
+                severity: warn
+      - name: operating_margin_ttm
+        description: Operating margin TTM as decimal
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 1
+              config:
+                severity: warn
+      - name: return_on_assets_ttm
+        description: Return on assets TTM as decimal
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -5
+              max_value: 5
+              config:
+                severity: warn
+      - name: return_on_equity_ttm
+        description: Return on equity TTM as decimal
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -50
+              max_value: 50
+              config:
+                severity: warn
+      - name: percent_insiders
+        description: Percentage of shares held by insiders (0–100)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+      - name: percent_institutions
+        description: Percentage of shares held by institutions (0–100)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              config:
+                severity: warn
+      - name: dividend_yield
+        description: Annual dividend yield as decimal (e.g., 0.03 = 3%)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+              config:
+                severity: warn
+      - name: dividend_per_share
+        description: Annual dividend paid per share
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_target_price
+        description: Consensus analyst price target
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: analyst_rating_strong_buy
+        description: Number of strong buy analyst ratings
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_buy
+        description: Number of buy analyst ratings
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_hold
+        description: Number of hold analyst ratings
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_sell
+        description: Number of sell analyst ratings
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: analyst_rating_strong_sell
+        description: Number of strong sell analyst ratings
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: week_52_high
+        description: 52-week price high
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: week_52_low
+        description: 52-week price low
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: ma_50d
+        description: 50-day moving average price
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: ma_200d
+        description: 200-day moving average price
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+
+  - name: stg_treasury_yields
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: daily via fetch_alphavantage_fixed_income.py
+    description: "Cleaned daily US Treasury yield observations. Grain: date, maturity. Deduped on latest load."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date, maturity]
+      - min_row_count:
+          min_rows: 100
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: maturity
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['3month', '2year', '5year', '7year', '10year', '30year']
+      - name: yield_pct
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: -2
+              max_value: 25
+              config:
+                severity: warn
+
+  - name: stg_fed_funds_rate
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: daily via fetch_alphavantage_fixed_income.py
+    description: "Cleaned daily effective federal funds rate. Grain: date."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 100
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: rate_pct
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 25
+              config:
+                severity: warn
+
+  - name: stg_cpi
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: monthly
+      sla: monthly release (typically first two weeks of month)
+    description: "Cleaned monthly CPI (all urban consumers). Grain: date (first of each month)."
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 12
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: cpi_value
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 50
+              max_value: 1000
+              config:
+                severity: warn
+
+  - name: stg_fred_macro
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: daily via fetch_fred_macro_data.py
+    description: >
+      Cleaned daily macro and risk signal observations from the FRED API.
+      Deduplicated by (series_id, date). Missing observations ('.') dropped at ingestion.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [series_id, date]
+      - min_row_count:
+          min_rows: 100
+    columns:
+      - name: series_id
+        description: FRED series identifier (e.g. VIXCLS, DCOILWTICO)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['VIXCLS', 'DCOILWTICO', 'DCOILBRENTEU', 'T10YIE', 'BAMLH0A0HYM2']
+      - name: series_name
+        description: Human-readable series name
+        tests:
+          - not_null
+      - name: date
+        description: Observation date
+        tests:
+          - not_null
+          - no_future_date:
+              column_name: date
+      - name: value
+        description: Numeric observation value
+        tests:
+          - not_null
+
+  - name: stg_gdelt_events
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: daily
+      sla: daily via fetch_gdelt_events.py
+    description: >
+      Cleaned daily GDELT geopolitical event aggregates filtered to US-relevant events.
+      Grain: one row per calendar date. Deduped on latest load.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 100
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: avg_tone
+        description: Article-weighted mean event tone (-100=very negative, +100=very positive)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -100
+              max_value: 100
+              config:
+                severity: warn
+      - name: conflict_intensity
+        description: Article-weighted mean Goldstein scale (-10=max conflict, +10=max cooperation)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 10
+              config:
+                severity: warn
+      - name: total_articles
+        description: Total article volume for US-relevant events (attention proxy)
+      - name: total_events
+        description: Total event count for US-relevant events
+      - name: pct_conflict
+        description: Share of events with conflictual QuadClass (3=verbal conflict, 4=material conflict)
+      - name: us_china_tone
+        description: Bilateral US–China event tone (article-weighted mean)
+      - name: us_iran_tone
+        description: Bilateral US–Iran event tone
+      - name: us_russia_tone
+        description: Bilateral US–Russia event tone
+      - name: us_europe_tone
+        description: US–Europe regional aggregated tone (covers EU/NATO members)
+      - name: us_mideast_tone
+        description: US–Middle East regional aggregated tone (covers Iran, Saudi Arabia, Israel, etc.)
+      - name: us_apac_tone
+        description: US–Asia Pacific regional aggregated tone (covers China, Japan, India, Korea, etc.)
+
+  - name: stg_av_news_sentiment
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: daily
+      sla: daily via fetch_av_news_sentiment.py
+    description: >
+      Cleaned AlphaVantage news sentiment aggregates by (date, topic).
+      Grain: one row per (date, topic). History starts ~2022-01-01.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date, topic]
+      - min_row_count:
+          min_rows: 10
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: topic
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['financial_markets', 'economy_macro', 'economy_monetary',
+                       'economy_fiscal', 'earnings', 'energy_transportation']
+      - name: avg_sentiment_score
+        description: Mean article sentiment score for this topic on this date (-1=very bearish, +1=very bullish)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1
+              max_value: 1
+              config:
+                severity: warn
+      - name: article_count
+        description: Number of articles contributing to this daily aggregate
+      - name: bullish_pct
+        description: Share of articles labeled Bullish or Somewhat-Bullish
+      - name: bearish_pct
+        description: Share of articles labeled Bearish or Somewhat-Bearish
+
+  - name: stg_indicator_metadata
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: as-needed
+      sla: static reference data
+    description: Staged metadata for industry-level economic leading indicators
+    tests:
+      - min_row_count:
+          min_rows: 1
+    columns:
+      - name: indicatorid
+        description: Unique identifier for the economic indicator
+        tests:
+          - not_null
+          - unique
+      - name: name
+        description: Human-readable indicator name
+        tests:
+          - not_null
+          - unique:
+              config:
+                severity: warn
+          - not_empty_string
+      - name: classification
+        description: Leading, lagging, or coincident classification
+        tests:
+          - not_null
+          - not_empty_string
+      - name: units
+        description: Unit of measurement for the indicator values
+        tests:
+          - not_null
+      - name: industrylist
+        description: Comma-separated list of industries this indicator applies to
+        tests:
+          - not_null
+          - not_empty_string
+
+  - name: stg_indicator_timeseries
+    meta:
+      owner: data_engineering
+      tier: supporting
+      refresh_frequency: monthly
+      sla: monthly on Snowflake Marketplace update
+    description: Staged time series values for economic leading indicators
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - indicatorid
+            - date
+      - min_row_count:
+          min_rows: 100
+      - no_future_date:
+          column_name: date
+    columns:
+      - name: indicatorid
+        description: Foreign key to indicator metadata
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_indicator_metadata')
+              field: indicatorid
+      - name: date
+        description: Observation date for this indicator value
+        tests:
+          - not_null
+      - name: value
+        description: Numeric value of the indicator on this date
+        tests:
+          - not_null

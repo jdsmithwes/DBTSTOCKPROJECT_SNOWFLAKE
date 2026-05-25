@@ -1,0 +1,37 @@
+name: "DBTSTOCKPROJECT"
+version: "1.0.0"
+config-version: 2
+profile: "dbt_stockproject"
+
+flags:
+  enable_iceberg_materializations: true
+
+model-paths:
+  - models
+analysis-paths:
+  - analyses
+test-paths:
+  - tests
+seed-paths:
+  - seeds
+macro-paths:
+  - macros
+snapshot-paths:
+  - snapshots
+
+models:
+  DBTSTOCKPROJECT:
+    staging:
+      +materialized: ephemeral
+      +schema: JDS_STAGING
+    intermediate:
+      +materialized: view
+      +schema: JDS_INTERMEDIATE
+    marts:
+      +materialized: table
+      +schema: JDS_MARTS
+      +table_format: iceberg
+      +external_volume: DBT_STOCKPROJECT_ICEBERG_VOL
+      +storage_serialization_policy: COMPATIBLE
+      +on_schema_change: fail
+      +tags: ['marts']

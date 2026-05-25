@@ -1,0 +1,112 @@
+company_industry,indicator_industry
+ADVERTISING AGENCIES,CPG
+AEROSPACE & DEFENSE,Industrial Production
+AGRICULTURAL INPUTS,Industrial Production
+AIRLINES,Industrial Production
+APPAREL MANUFACTURING,CPG
+APPAREL RETAIL,Retail
+ASSET MANAGEMENT,Financial Services
+AUTO & TRUCK DEALERSHIPS,Auto Industry
+AUTO MANUFACTURERS,Auto Industry
+AUTO PARTS,Auto Industry
+BANKS - DIVERSIFIED,Financial Services
+BANKS - REGIONAL,Financial Services
+BEVERAGES - BREWERS,Food & Beverage
+BEVERAGES - NON-ALCOHOLIC,Food & Beverage
+BIOTECHNOLOGY,Industrial Production
+BUILDING MATERIALS,Nonresidential Construction
+BUILDING PRODUCTS & EQUIPMENT,Nonresidential Construction
+CAPITAL MARKETS,Financial Services
+CHEMICALS,Chemical
+COMMUNICATION EQUIPMENT,Telecom
+COMPUTER HARDWARE,Industrial Production
+CONFECTIONERS,Food & Beverage
+CONGLOMERATES,Industrial Production
+CONSULTING SERVICES,Industrial Production
+CONSUMER ELECTRONICS,Retail
+COPPER,Steel
+CREDIT SERVICES,Financial Services
+DIAGNOSTICS & RESEARCH,Industrial Production
+DISCOUNT STORES,Retail
+DRUG MANUFACTURERS - GENERAL,Industrial Production
+DRUG MANUFACTURERS - SPECIALTY & GENERIC,Industrial Production
+ELECTRICAL EQUIPMENT & PARTS,Industrial Production
+ELECTRONIC COMPONENTS,Industrial Production
+ELECTRONIC GAMING & MULTIMEDIA,Telecom
+ENGINEERING & CONSTRUCTION,Nonresidential Construction
+ENTERTAINMENT,CPG
+FARM & HEAVY CONSTRUCTION MACHINERY,Industrial Production
+FARM PRODUCTS,Food & Beverage
+FINANCIAL DATA & STOCK EXCHANGES,Financial Services
+FOOD DISTRIBUTION,Food & Beverage
+FOOTWEAR & ACCESSORIES,Retail
+"FURNISHINGS, FIXTURES & APPLIANCES",Residential Construction
+GOLD,Steel
+GROCERY STORES,Food & Beverage
+HEALTH INFORMATION SERVICES,Industrial Production
+HEALTHCARE PLANS,Financial Services
+HOME IMPROVEMENT RETAIL,Residential Construction
+HOUSEHOLD & PERSONAL PRODUCTS,CPG
+INDUSTRIAL DISTRIBUTION,Industrial Production
+INFORMATION TECHNOLOGY SERVICES,Telecom
+INSURANCE - DIVERSIFIED,Financial Services
+INSURANCE - LIFE,Financial Services
+INSURANCE - PROPERTY & CASUALTY,Financial Services
+INSURANCE - REINSURANCE,Financial Services
+INSURANCE BROKERS,Financial Services
+INTEGRATED FREIGHT & LOGISTICS,Industrial Production
+INTERNET CONTENT & INFORMATION,Telecom
+INTERNET RETAIL,Retail
+LEISURE,CPG
+LODGING,Restaurant Industry
+LUXURY GOODS,Retail
+MEDICAL CARE FACILITIES,Industrial Production
+MEDICAL DEVICES,Industrial Production
+MEDICAL DISTRIBUTION,Industrial Production
+MEDICAL INSTRUMENTS & SUPPLIES,Industrial Production
+OIL & GAS E&P,Industrial Production
+OIL & GAS EQUIPMENT & SERVICES,Industrial Production
+OIL & GAS INTEGRATED,Industrial Production
+OIL & GAS MIDSTREAM,Industrial Production
+OIL & GAS REFINING & MARKETING,Industrial Production
+PACKAGED FOODS,Food & Beverage
+PACKAGING & CONTAINERS,CPG
+PERSONAL SERVICES,CPG
+POLLUTION & TREATMENT CONTROLS,Industrial Production
+RAILROADS,Industrial Production
+REAL ESTATE SERVICES,Nonresidential Construction
+REIT - DIVERSIFIED,Financial Services
+REIT - HEALTHCARE FACILITIES,Financial Services
+REIT - HOTEL & MOTEL,Financial Services
+REIT - INDUSTRIAL,Financial Services
+REIT - OFFICE,Nonresidential Construction
+REIT - RESIDENTIAL,Residential Construction
+REIT - RETAIL,Retail
+REIT - SPECIALTY,Financial Services
+RENTAL & LEASING SERVICES,Financial Services
+RESIDENTIAL CONSTRUCTION,Residential Construction
+RESORTS & CASINOS,Restaurant Industry
+RESTAURANTS,Restaurant Industry
+SCIENTIFIC & TECHNICAL INSTRUMENTS,Industrial Production
+SECURITY & PROTECTION SERVICES,Industrial Production
+SEMICONDUCTOR EQUIPMENT & MATERIALS,Industrial Production
+SEMICONDUCTORS,Industrial Production
+SOFTWARE - APPLICATION,Telecom
+SOFTWARE - INFRASTRUCTURE,Telecom
+SOLAR,Industrial Production
+SPECIALTY BUSINESS SERVICES,Industrial Production
+SPECIALTY CHEMICALS,Chemical
+SPECIALTY INDUSTRIAL MACHINERY,Industrial Production
+SPECIALTY RETAIL,Retail
+STEEL,Steel
+TELECOM SERVICES,Telecom
+TOBACCO,CPG
+TOOLS & ACCESSORIES,Industrial Production
+TRAVEL SERVICES,Restaurant Industry
+TRUCKING,Industrial Production
+UTILITIES - DIVERSIFIED,Industrial Production
+UTILITIES - INDEPENDENT POWER PRODUCERS,Industrial Production
+UTILITIES - REGULATED ELECTRIC,Industrial Production
+UTILITIES - REGULATED GAS,Industrial Production
+UTILITIES - REGULATED WATER,Industrial Production
+WASTE MANAGEMENT,Industrial Production

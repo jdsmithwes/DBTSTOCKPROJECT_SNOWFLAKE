@@ -1,0 +1,491 @@
+"""
+backfill_missing_dates.py
+─────────────────────────
+Fully autonomous backfill pipeline. No manual dbt pre-run required.
+
+Ingestion path: S3 → COPY INTO (synchronous, bypasses Snowpipe/SNS entirely).
+
+Phases
+──────
+  1. DETECT  — Query RAW_STOCK_DATA for each ticker's last loaded date.
+               Build expected NYSE trading days in Python (weekdays minus
+               US market holidays). Compute gaps natively.
+  2. FETCH   — Async AlphaVantage calls for every ticker × missing dates.
+  3. UPLOAD  — Push backfilled rows as CSV to S3.
+  4. LOAD    — COPY INTO RAW_STOCK_DATA from the Snowflake S3 stage
+               (synchronous — no SNS/Snowpipe polling required).
+  5. REFRESH — Run `dbt run` to rebuild all downstream models.
+
+Required environment variables
+───────────────────────────────
+  SNOWFLAKE_ACCOUNT       e.g. TPRFGUJ-JNC76647
+  SNOWFLAKE_USER          e.g. jdsmithwes
+  SNOWFLAKE_PASSWORD      Snowflake password or PAT
+  SNOWFLAKE_ROLE          e.g. DBT_ROLE
+  SNOWFLAKE_WAREHOUSE     e.g. DBT_STOCKPROJECT
+  SNOWFLAKE_DATABASE      e.g. DBT_STOCKPROJECT
+  ALPHAVANTAGE_API_KEY    your AlphaVantage API key
+  AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY
+  AWS_REGION              default: us-east-1
+  S3_BUCKET_NAME          the bucket the Snowflake stage points to
+  S3_PREFIX               default: stock_prices/
+
+Optional overrides
+──────────────────
+  DBT_EXECUTABLE          default: /Users/jamaalsmith/dbtenv/bin/dbt
+  DBT_PROJECT_DIR         default: directory of this script's parent/DBTSTOCKPROJECT
+  DBT_PROFILES_DIR        default: ~/.dbt
+  SNOWFLAKE_STAGE         fully-qualified stage name (default below)
+"""
+
+import asyncio
+import logging
+import os
+import subprocess
+from collections import defaultdict
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+import ssl
+
+import aiohttp
+import boto3
+import certifi
+import pandas as pd
+import snowflake.connector
+from tenacity import retry, stop_after_attempt, wait_fixed
+
+# macOS Python 3.11 doesn't trust the system CA bundle by default;
+# certifi provides a known-good bundle so HTTPS to AlphaVantage works.
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+# ──────────────────────────────────────────────
+# LOGGING
+# ──────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+log = logging.getLogger(__name__)
+
+# ──────────────────────────────────────────────
+# ENVIRONMENT
+# ──────────────────────────────────────────────
+SNOWFLAKE_ACCOUNT   = os.environ["SNOWFLAKE_ACCOUNT"]
+SNOWFLAKE_USER      = os.environ["SNOWFLAKE_USER"]
+SNOWFLAKE_PASSWORD  = os.environ["SNOWFLAKE_PASSWORD"]
+SNOWFLAKE_ROLE      = os.environ["SNOWFLAKE_ROLE"]
+SNOWFLAKE_WAREHOUSE = os.environ["SNOWFLAKE_WAREHOUSE"]
+SNOWFLAKE_DATABASE  = os.environ["SNOWFLAKE_DATABASE"]
+
+ALPHAVANTAGE_API_KEY = os.environ["ALPHAVANTAGE_API_KEY"]
+ALPHAVANTAGE_URL     = "https://www.alphavantage.co/query"
+
+AWS_ACCESS_KEY_ID     = os.environ.get("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
+AWS_REGION            = os.environ.get("AWS_REGION", "us-east-1")
+S3_BUCKET_NAME        = os.environ["S3_BUCKET_NAME"]
+S3_PREFIX             = os.environ.get("S3_PREFIX", "stock_prices/")
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+DBT_EXECUTABLE   = os.environ.get(
+    "DBT_EXECUTABLE", "/Users/jamaalsmith/dbtenv/bin/dbt"
+)
+DBT_PROJECT_DIR  = os.environ.get(
+    "DBT_PROJECT_DIR", str(_SCRIPT_DIR.parent / "DBTSTOCKPROJECT")
+)
+DBT_PROFILES_DIR = os.environ.get("DBT_PROFILES_DIR", str(Path.home() / ".dbt"))
+
+# Fully-qualified Snowflake stage that maps to the S3_BUCKET_NAME/S3_PREFIX location.
+# DBT_ROLE must have USAGE + READ on this stage (grants already applied).
+SNOWFLAKE_STAGE = os.environ.get(
+    "SNOWFLAKE_STAGE",
+    "DBT_STOCKPROJECT.PUBLIC.S3_DBTSTOCKPROJECT_STAGE_STOCKPRICES",
+)
+
+MAX_CONCURRENT_REQUESTS = 5
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=60)
+# AlphaVantage $50/month plan: 75 req/min = 1.25 req/sec.
+# We throttle to ~1 req/sec (60/min) to stay safely under the cap.
+# With 5 concurrent slots, each slot sleeps 4s after its request finishes,
+# yielding 5 active slots / 4.5s cycle ≈ 1.1 req/sec across the pool.
+ALPHAVANTAGE_REQUEST_DELAY = float(os.environ.get("ALPHAVANTAGE_REQUEST_DELAY", "4.0"))
+
+# ──────────────────────────────────────────────
+# NYSE MARKET HOLIDAYS  (mirrors seeds/us_market_holidays.csv)
+# ──────────────────────────────────────────────
+_NYSE_HOLIDAYS: set[date] = {
+    date.fromisoformat(d) for d in [
+        # 2020
+        "2020-01-01", "2020-01-20", "2020-02-17", "2020-04-10",
+        "2020-05-25", "2020-07-03", "2020-09-07", "2020-11-26", "2020-12-25",
+        # 2021
+        "2021-01-01", "2021-01-18", "2021-02-15", "2021-04-02",
+        "2021-05-31", "2021-07-05", "2021-09-06", "2021-11-25",
+        "2021-12-24", "2021-12-31",
+        # 2022
+        "2022-01-17", "2022-02-21", "2022-04-15", "2022-05-30",
+        "2022-06-20", "2022-07-04", "2022-09-05", "2022-11-24", "2022-12-26",
+        # 2023
+        "2023-01-02", "2023-01-16", "2023-02-20", "2023-04-07",
+        "2023-05-29", "2023-06-19", "2023-07-04", "2023-09-04",
+        "2023-11-23", "2023-12-25",
+        # 2024
+        "2024-01-01", "2024-01-15", "2024-02-19", "2024-03-29",
+        "2024-05-27", "2024-06-19", "2024-07-04", "2024-09-02",
+        "2024-11-28", "2024-12-25",
+        # 2025
+        "2025-01-01", "2025-01-09", "2025-01-20", "2025-02-17",
+        "2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04",
+        "2025-09-01", "2025-11-27", "2025-12-25",
+        # 2026
+        "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
+        "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07",
+        "2026-11-26", "2026-12-25",
+    ]
+}
+
+
+def _last_completed_trading_day() -> date:
+    """
+    Returns the most recent trading day that has fully closed —
+    yesterday (or last Friday if today is Monday, adjusting for holidays).
+    """
+    candidate = date.today() - timedelta(days=1)
+    while candidate.weekday() >= 5 or candidate in _NYSE_HOLIDAYS:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def _trading_days_between(start: date, end: date) -> list[date]:
+    """All NYSE trading days in (start, end] — exclusive start, inclusive end."""
+    result = []
+    current = start + timedelta(days=1)
+    while current <= end:
+        if current.weekday() < 5 and current not in _NYSE_HOLIDAYS:
+            result.append(current)
+        current += timedelta(days=1)
+    return result
+
+
+# ──────────────────────────────────────────────
+# SNOWFLAKE CONNECTION HELPER
+# ──────────────────────────────────────────────
+def _snowflake_conn():
+    return snowflake.connector.connect(
+        account=SNOWFLAKE_ACCOUNT,
+        user=SNOWFLAKE_USER,
+        password=SNOWFLAKE_PASSWORD,
+        role=SNOWFLAKE_ROLE,
+        warehouse=SNOWFLAKE_WAREHOUSE,
+        database=SNOWFLAKE_DATABASE,
+    )
+
+
+# ──────────────────────────────────────────────
+# PHASE 1 — DETECT GAPS NATIVELY
+# ──────────────────────────────────────────────
+def detect_gaps() -> dict[date, list[str]]:
+    """
+    Queries RAW_STOCK_DATA directly for the latest loaded date per ticker.
+    Computes missing NYSE trading days in Python — no dbt pre-run required.
+
+    Returns dict mapping each missing trading date → list of tickers that
+    need data on that date.
+    """
+    log.info("Phase 1: detecting gaps in RAW_STOCK_DATA …")
+
+    conn = _snowflake_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT ticker, MAX(date)::date AS last_date
+            FROM {SNOWFLAKE_DATABASE}.PUBLIC.RAW_STOCK_DATA
+            GROUP BY ticker
+        """)
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        log.warning("RAW_STOCK_DATA is empty — nothing to backfill against.")
+        return {}
+
+    last_trading_day = _last_completed_trading_day()
+    log.info(f"Last completed trading day: {last_trading_day}")
+
+    gaps: dict[date, list[str]] = defaultdict(list)
+    for ticker, last_date in rows:
+        if isinstance(last_date, str):
+            last_date = date.fromisoformat(last_date)
+        if last_date >= last_trading_day:
+            continue
+        for missing in _trading_days_between(last_date, last_trading_day):
+            gaps[missing].append(ticker)
+
+    if not gaps:
+        log.info("✅ No missing dates — all tickers are up to date.")
+        return {}
+
+    unique_dates   = len(gaps)
+    unique_tickers = len({t for tickers in gaps.values() for t in tickers})
+    total_pairs    = sum(len(v) for v in gaps.values())
+    log.info(
+        f"📋 Found {total_pairs} missing (ticker, date) pairs "
+        f"across {unique_dates} dates and {unique_tickers} tickers."
+    )
+    log.info(f"📅 Gap window: {min(gaps)} → {max(gaps)}")
+
+    return dict(gaps)
+
+
+# ──────────────────────────────────────────────
+# PHASE 2 — FETCH FROM ALPHAVANTAGE
+# ──────────────────────────────────────────────
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+async def _fetch_ticker(
+    session: aiohttp.ClientSession,
+    ticker: str,
+    missing_dates: set[date],
+) -> pd.DataFrame | None:
+    days_gap  = (max(missing_dates) - min(missing_dates)).days
+    outputsize = "compact" if days_gap <= 90 else "full"
+
+    params = {
+        "function":   "TIME_SERIES_DAILY_ADJUSTED",
+        "symbol":     ticker,
+        "outputsize": outputsize,
+        "apikey":     ALPHAVANTAGE_API_KEY,
+    }
+
+    async with session.get(ALPHAVANTAGE_URL, params=params) as resp:
+        if resp.status != 200:
+            raise RuntimeError(f"HTTP {resp.status} for {ticker}")
+
+        payload = await resp.json(content_type=None)
+
+        if "Time Series (Daily)" not in payload:
+            # Surface the API message so we can distinguish rate-limit
+            # responses from genuinely delisted / unsupported symbols.
+            api_msg = (
+                payload.get("Note")
+                or payload.get("Information")
+                or payload.get("Error Message")
+                or str(list(payload.keys()))
+            )
+            log.warning(f"⚠️  No data for {ticker} — API says: {api_msg[:120]}")
+            return None
+
+        records = []
+        for date_str, values in payload["Time Series (Daily)"].items():
+            trading_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            if trading_date not in missing_dates:
+                continue
+            records.append({
+                "ticker":            ticker,
+                "date":              date_str,
+                "open":              values.get("1. open"),
+                "high":              values.get("2. high"),
+                "low":               values.get("3. low"),
+                "close":             values.get("4. close"),
+                "adjusted_close":    values.get("5. adjusted close"),
+                "volume":            values.get("6. volume"),
+                "dividend_amount":   values.get("7. dividend amount"),
+                "split_coefficient": values.get("8. split coefficient"),
+                "load_time":         datetime.utcnow().isoformat(),
+            })
+
+        if not records:
+            log.warning(f"⚠️  {ticker}: AlphaVantage had no rows for the missing dates")
+            return None
+
+        log.info(f"✅ {ticker}: fetched {len(records)} missing row(s)")
+        return pd.DataFrame(records)
+
+
+async def _fetch_all(gaps: dict[date, list[str]]) -> pd.DataFrame:
+    # Invert: ticker → set of dates it needs
+    ticker_to_dates: dict[str, set[date]] = defaultdict(set)
+    for trading_date, tickers in gaps.items():
+        for ticker in tickers:
+            ticker_to_dates[ticker].add(trading_date)
+
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+    frames    = []
+
+    connector = aiohttp.TCPConnector(ssl=_SSL_CONTEXT)
+    async with aiohttp.ClientSession(connector=connector, timeout=REQUEST_TIMEOUT) as session:
+
+        async def bounded(ticker: str, dates: set[date]):
+            async with semaphore:
+                result = await _fetch_ticker(session, ticker, dates)
+                # Throttle to stay under the AlphaVantage rate limit.
+                # Each slot sleeps after its request so the pool collectively
+                # sends ≈ MAX_CONCURRENT / (latency + delay) requests/sec.
+                await asyncio.sleep(ALPHAVANTAGE_REQUEST_DELAY)
+                return result
+
+        tasks = [bounded(t, d) for t, d in ticker_to_dates.items()]
+
+        total   = len(tasks)
+        success, skipped = 0, 0
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            done   = success + skipped + 1
+            if result is None:
+                skipped += 1
+            else:
+                frames.append(result)
+                success += 1
+            if done % 25 == 0 or done == total:
+                log.info(
+                    f"   Progress: {done}/{total} tickers processed "
+                    f"({success} success, {skipped} skipped)"
+                )
+
+    log.info(f"📊 Fetch summary — success: {success}, skipped: {skipped}")
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+# ──────────────────────────────────────────────
+# PHASE 3 — UPLOAD TO S3
+# ──────────────────────────────────────────────
+def upload_to_s3(df: pd.DataFrame) -> str:
+    """
+    Uploads backfilled rows as CSV to S3 and returns the s3_key
+    (e.g. 'stock_prices/backfill_20260517_123456.csv').
+    """
+    s3 = boto3.client(
+        "s3",
+        region_name=AWS_REGION,
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    )
+
+    run_timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    s3_key        = f"{S3_PREFIX}backfill_{run_timestamp}.csv"
+
+    # RAW_STOCK_DATA schema: DATE, OPEN, HIGH, LOW, CLOSE, ADJUSTED_CLOSE,
+    # VOLUME, DIVIDEND_AMOUNT, SPLIT_COEFFICIENT, TICKER  (no load_time column)
+    upload_cols = [
+        "date", "open", "high", "low", "close",
+        "adjusted_close", "volume", "dividend_amount", "split_coefficient", "ticker",
+    ]
+    csv_bytes = df[upload_cols].to_csv(index=False).encode("utf-8")
+    s3.put_object(Bucket=S3_BUCKET_NAME, Key=s3_key, Body=csv_bytes)
+
+    log.info(
+        f"📤 Uploaded {len(df)} rows "
+        f"({df['ticker'].nunique()} tickers, {df['date'].nunique()} dates) "
+        f"→ s3://{S3_BUCKET_NAME}/{s3_key}"
+    )
+    return s3_key
+
+
+# ──────────────────────────────────────────────
+# PHASE 4 — COPY INTO FROM S3 STAGE
+# ──────────────────────────────────────────────
+def load_via_copy_into(s3_key: str) -> int:
+    """
+    Loads the uploaded CSV directly into RAW_STOCK_DATA using COPY INTO from
+    the Snowflake external stage. Synchronous — no Snowpipe/SNS polling needed.
+
+    The stage URL already includes the S3_PREFIX path, so FILES only needs the
+    bare filename (the part after the last '/').
+
+    Returns the number of rows loaded.
+    """
+    filename = s3_key.split("/")[-1]
+    log.info(f"Phase 4: running COPY INTO from stage file '{filename}' …")
+
+    copy_sql = f"""
+        COPY INTO {SNOWFLAKE_DATABASE}.PUBLIC.RAW_STOCK_DATA
+        FROM @{SNOWFLAKE_STAGE}
+        FILES = ('{filename}')
+        FILE_FORMAT = (
+            TYPE = 'CSV'
+            SKIP_HEADER = 1
+            FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+            EMPTY_FIELD_AS_NULL = TRUE
+        )
+        ON_ERROR = CONTINUE
+    """
+
+    conn = _snowflake_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(copy_sql)
+        rows = cur.fetchall()
+        # COPY INTO result columns (0-indexed):
+        # 0: file, 1: status, 2: rows_parsed, 3: rows_loaded,
+        # 4: error_limit, 5: errors_seen, 6: first_error, …
+        total_loaded = sum(r[3] for r in rows if r[1] == "LOADED")
+        total_errors = sum(r[5] for r in rows)
+        log.info(f"✅ COPY INTO complete — {total_loaded:,} rows loaded, {total_errors} parse errors.")
+        if total_errors:
+            log.warning("   Some rows were skipped due to parse errors (ON_ERROR=CONTINUE).")
+        return total_loaded
+    finally:
+        conn.close()
+
+
+# ──────────────────────────────────────────────
+# PHASE 5 — REFRESH DBT MODELS
+# ──────────────────────────────────────────────
+def _run_dbt_command(subcommand: str) -> None:
+    cmd = [
+        DBT_EXECUTABLE,
+        subcommand,
+        "--profiles-dir", DBT_PROFILES_DIR,
+        "--project-dir",  DBT_PROJECT_DIR,
+    ]
+    log.info(f"   Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=False, text=True)
+    if result.returncode != 0:
+        log.error(f"❌ dbt {subcommand} failed with exit code {result.returncode}.")
+        raise SystemExit(result.returncode)
+    log.info(f"✅ dbt {subcommand} completed successfully.")
+
+
+def run_dbt() -> None:
+    """Runs `dbt seed` then `dbt run` using the project's virtual-env dbt binary."""
+    log.info("Phase 5: running dbt seed + dbt run …")
+    _run_dbt_command("seed")
+    _run_dbt_command("run")
+
+
+# ──────────────────────────────────────────────
+# MAIN
+# ──────────────────────────────────────────────
+async def main() -> None:
+    log.info("🚀 Starting autonomous backfill pipeline")
+
+    # Phase 1 — detect
+    gaps = detect_gaps()
+    if not gaps:
+        log.info("Nothing to backfill. Exiting.")
+        return
+
+    # Phase 2 — fetch
+    log.info("Phase 2: fetching missing data from AlphaVantage …")
+    df = await _fetch_all(gaps)
+    if df.empty:
+        log.warning("⚠️  No data fetched from AlphaVantage — nothing to upload.")
+        return
+
+    # Phase 3 — upload
+    log.info("Phase 3: uploading to S3 …")
+    s3_key = upload_to_s3(df)
+
+    # Phase 4 — load synchronously via COPY INTO
+    load_via_copy_into(s3_key)
+
+    # Phase 5 — refresh
+    run_dbt()
+
+    log.info("🏁 Autonomous backfill pipeline complete.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

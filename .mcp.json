@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "snowflake": {
+      "command": "/Users/jamaalsmith/workspaces/DBTSTOCKPROJECT_SNOWFLAKE/.mcp_snowflake_start.sh",
+      "args": []
+    }
+  }
+}

@@ -1,0 +1,48 @@
+dbt_stockproject:
+  # Default target is 'snowflake' (runs inside Snowflake Workspace / DBT PROJECT).
+  # For local development, override with: dbt run --target dev --profiles-dir .
+  target: snowflake
+
+  outputs:
+
+    # ── Local development ──────────────────────────────────────────────────────
+    # Run dbt from the terminal with credentials in .env:
+    #   set -a && source .env && set +a
+    #   dbt run --target dev --profiles-dir .
+    dev:
+      type: snowflake
+      account:   "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user:      "{{ env_var('SNOWFLAKE_USER') }}"
+      password:  "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role:      "{{ env_var('SNOWFLAKE_ROLE',      'DBT_ROLE') }}"
+      database:  "{{ env_var('SNOWFLAKE_DATABASE',  'DBT_STOCKPROJECT') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DBT_STOCKPROJECT') }}"
+      schema:    "{{ env_var('SNOWFLAKE_SCHEMA',    'DBT_DEV_JDS_STAGING') }}"
+      threads: 8
+
+    # ── Production ────────────────────────────────────────────────────────────
+    # Run against production schemas (no DEV_ prefix). Requires DBT_TARGET=prod.
+    # Uses same credentials as dev; schema resolves to production aliases via
+    # macros/generate_schema_name.sql (JDS_MARTS, JDS_INTERMEDIATE, JDS_STAGING).
+    prod:
+      type: snowflake
+      account:   "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user:      "{{ env_var('SNOWFLAKE_USER') }}"
+      password:  "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role:      "{{ env_var('SNOWFLAKE_ROLE',      'DBT_ROLE') }}"
+      database:  "{{ env_var('SNOWFLAKE_DATABASE',  'DBT_STOCKPROJECT') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DBT_STOCKPROJECT') }}"
+      schema:    "JDS_STAGING"
+      threads: 8
+
+    # ── Inside Snowflake (Workspace / DBT PROJECT / Task) ─────────────────────
+    # No env_var() calls — auth is handled by the Snowflake session automatically.
+    snowflake:
+      type: snowflake
+      account: TPRFGUJ-JNC76647
+      user: jdsmithwes
+      role: DBT_ROLE
+      database: DBT_STOCKPROJECT
+      warehouse: DBT_STOCKPROJECT
+      schema: JDS_STAGING
+      threads: 8

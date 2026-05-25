@@ -1,0 +1,660 @@
+version: 2
+
+models:
+  - name: mart_macro_health
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
+    description: >
+      Macro economic health mart. Grain: one row per NYSE trading date.
+      Combines Federal Funds Rate and CPI into a daily snapshot with derived signals
+      that characterize the current policy-inflation regime.
+
+      Designed for retirement savers: plain-English economic_health_label alongside
+      quantitative signals (real_fed_funds_rate, inflation_vs_target, policy_stance)
+      so both analysts and family members can interpret macro conditions.
+
+      asset_class = 'MACRO' for cross-asset joins with mart_ml_features (EQUITY)
+      and mart_fixed_income (FIXED_INCOME).
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date]
+      - min_row_count:
+          min_rows: 1000
+    columns:
+      - name: date
+        tests: [not_null, unique]
+      - name: asset_class
+        description: Always 'MACRO' — distinguishes from EQUITY and FIXED_INCOME marts
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['MACRO']
+      - name: fed_funds_rate
+        description: Effective federal funds rate (%) — forward-filled from daily observations
+        tests: [not_null]
+      - name: cpi_value
+        description: CPI index level, all urban consumers — forward-filled from monthly releases
+      - name: cpi_yoy_pct
+        description: Year-over-year CPI inflation rate (%) — approximate using ~252-day lag
+      - name: cpi_mom_pct
+        description: Month-over-month CPI change (%) — computed at monthly grain from stg_cpi to avoid forward-fill noise
+      - name: real_fed_funds_rate
+        description: >
+          fed_funds_rate minus cpi_yoy_pct (%). Positive = restrictive (Fed ahead of inflation);
+          negative = accommodative (Fed behind the curve). Null until 252 trading days of CPI history exist.
+      - name: inflation_vs_target
+        description: cpi_yoy_pct minus 2.0 (the Fed's inflation target). Positive = above target.
+      - name: fed_regime
+        description: "'HIKING', 'CUTTING', or 'NEUTRAL' based on 90-day fed funds rate trend"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['HIKING', 'CUTTING', 'NEUTRAL']
+      - name: inflation_regime
+        description: >
+          Inflation severity classification: DEFLATIONARY (<1%), LOW (1–2%),
+          TARGET (2–3%), ELEVATED (3–5%), HIGH (>5%). Null until CPI YoY is available.
+        tests:
+          - accepted_values:
+              values: ['DEFLATIONARY', 'LOW', 'TARGET', 'ELEVATED', 'HIGH']
+              config:
+                where: inflation_regime is not null
+      - name: policy_stance
+        description: >
+          RESTRICTIVE when real_fed_funds_rate > 0.5 pp, ACCOMMODATIVE when < -0.5 pp,
+          NEUTRAL otherwise. Null until CPI YoY is available.
+        tests:
+          - accepted_values:
+              values: ['RESTRICTIVE', 'ACCOMMODATIVE', 'NEUTRAL']
+              config:
+                where: policy_stance is not null
+      - name: fed_behind_curve
+        description: >
+          True when inflation is above the 2% target AND the real Fed Funds Rate is negative —
+          the Fed is subsidising borrowing while prices rise.
+        tests: [not_null]
+      - name: economic_health_label
+        description: >
+          Plain-English macro health label combining inflation regime and Fed policy direction.
+          Values: 'STABLE', 'NORMALIZING — restrictive policy working',
+          'OVERHEATING — Fed hiking', 'STAGFLATION RISK',
+          'DEFLATION RISK — Fed cutting', 'TRANSITIONING'.
+          Null until CPI YoY is available (~252 trading days after first CPI load).
+
+  - name: mart_fixed_income
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
+    description: >
+      Fixed income analysis mart. Grain: one row per (NYSE trading date, Treasury maturity).
+      6 rows per date — one per US Treasury maturity (3M/2Y/5Y/7Y/10Y/30Y).
+      Instruments without a maturity_term (Federal Funds Rate, CPI) are excluded.
+
+      security_name identifies the specific Treasury instrument; maturity_term carries the
+      original AlphaVantage maturity parameter value. rate_value is the yield (%) for that
+      instrument on that date.
+
+      Date-level derived signals (spread_2s10s, fed_regime, etc.) repeat on every row
+      for a given date and reflect the full fixed income market context for that day.
+
+      asset_class = 'FIXED_INCOME' for cross-asset comparisons with mart_ml_features (EQUITY).
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date, security_name]
+      - min_row_count:
+          min_rows: 1000
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: security_name
+        description: >
+          Identifies the specific US Treasury instrument in this row.
+          Values: 'US Treasury 3M', 'US Treasury 2Y', 'US Treasury 5Y',
+          'US Treasury 7Y', 'US Treasury 10Y', 'US Treasury 30Y'.
+          Sourced from the AlphaVantage TREASURY_YIELD maturity parameter.
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - 'US Treasury 3M'
+                - 'US Treasury 2Y'
+                - 'US Treasury 5Y'
+                - 'US Treasury 7Y'
+                - 'US Treasury 10Y'
+                - 'US Treasury 30Y'
+      - name: instrument_type
+        description: Always 'TREASURY_YIELD' — mart is scoped to Treasury yield instruments only.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['TREASURY_YIELD']
+      - name: maturity_term
+        description: >
+          Original AlphaVantage maturity label: '3month', '2year', '5year', '7year', '10year', '30year'.
+        tests:
+          - not_null
+      - name: rate_value
+        description: >
+          The instrument's value on this date: yield (%) for Treasury rows,
+          rate (%) for Federal Funds Rate, index value for CPI.
+      - name: asset_class
+        description: Always 'FIXED_INCOME' — use to distinguish from mart_ml_features (EQUITY)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['FIXED_INCOME']
+      - name: spread_2s10s
+        description: 10y minus 2y (pp); negative = inverted curve = recession risk elevated
+      - name: spread_3m10y
+        description: 10y minus 3m (pp); Fed's preferred inversion metric
+      - name: spread_2s30s
+        description: 30y minus 2y (pp); long-end demand signal
+      - name: term_premium
+        description: 10y minus fed funds rate (pp); duration risk compensation
+      - name: is_2s10s_inverted
+        description: True when 2s10s spread is negative
+      - name: is_3m10y_inverted
+        description: True when 3m10y spread is negative
+      - name: yield_10y_1d_chg_bps
+        description: 1-day change in 10y yield (basis points)
+      - name: yield_10y_5d_chg_bps
+        description: 5-day change in 10y yield (basis points)
+      - name: yield_2y_1d_chg_bps
+        description: 1-day change in 2y yield (basis points)
+      - name: cpi_yoy_pct
+        description: Year-over-year CPI inflation (%)
+      - name: approx_real_yield_10y
+        description: Nominal 10y yield minus CPI YoY / 100 — approximate real yield
+      - name: fed_regime
+        description: "'HIKING', 'CUTTING', or 'NEUTRAL' based on 90-day fed funds trend"
+      - name: inversion_days_trailing_1y
+        description: Count of trading days the 2s10s spread was inverted in the past 252 sessions
+      - name: fi_attractive_flag
+        description: True when yield_10y >= 4% — simple heuristic for competitive fixed income returns vs. equities
+
+  - name: mart_delisted_tickers
+    meta:
+      owner: data_engineering
+      tier: operational
+      refresh_frequency: daily
+      sla: daily, after mart_ml_features
+    description: >
+      One row per ticker that has stopped trading (DELISTED in int_ticker_coverage).
+      A ticker is classified as delisted when its last trading date in stg_stockprice
+      is more than 63 calendar days behind the dataset end date.
+
+      inferred_reason classifies the type of exit from price behaviour:
+        ACQUISITION_OR_MERGER   — last price >= 85% of historical peak (stable/elevated at exit)
+        BANKRUPTCY_OR_COLLAPSE  — last price < 40% of historical peak (severe decline)
+        DISTRESSED_EXIT         — 40–85% of peak AND price fell > 15% in the 30 days before exit
+        DELISTED_NO_DATA        — no company overview record in stg_companyoverview
+        UNKNOWN                 — no pattern matched
+
+      Known examples in this dataset: CTRA (ConocoPhillips acquisition), DFS (Capital One
+      acquisition), PXD (ExxonMobil acquisition), WBA (delisting/restructuring).
+    tests:
+      - min_row_count:
+          min_rows: 1
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - unique
+          - not_empty_string
+      - name: company_name
+        description: Full legal company name from stg_companyoverview; null if no overview record
+      - name: sector
+        description: GICS sector; null if no overview record
+      - name: industry
+        description: Industry sub-classification; null if no overview record
+      - name: exchange
+        description: Listing exchange; null if no overview record
+      - name: first_date
+        description: Earliest trading date in the dataset for this ticker
+        tests:
+          - not_null
+      - name: last_date
+        description: Final trading date in the dataset for this ticker
+        tests:
+          - not_null
+      - name: trading_days
+        description: Total trading days present in stg_stockprice for this ticker
+      - name: calendar_days_since_last_trade
+        description: Calendar days between last_date and the dataset end date
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 64
+      - name: last_close
+        description: Raw closing price on the final trading day
+      - name: last_volume
+        description: Share volume on the final trading day
+      - name: peak_adjusted_close
+        description: Highest adjusted closing price over the ticker's full history
+      - name: price_pct_of_peak_at_exit
+        description: last_adjusted_close / peak_adjusted_close; near 1.0 suggests acquisition at premium
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+              config:
+                severity: warn
+      - name: price_30d_return_at_exit
+        description: >
+          Adjusted close return over the ~30 trading days ending on last_date.
+          Negative and large = price was collapsing into the delisting event.
+          Null when the ticker has fewer than 31 trading days of history.
+      - name: inferred_reason
+        description: Rule-based classification of the delisting type
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - ACQUISITION_OR_MERGER
+                - BANKRUPTCY_OR_COLLAPSE
+                - DISTRESSED_EXIT
+                - DELISTED_NO_DATA
+                - UNKNOWN
+
+  - name: mart_data_gaps
+    meta:
+      owner: data_engineering
+      tier: operational
+      refresh_frequency: daily
+      sla: before 6:00 AM ET (before backfill script runs)
+    description: >
+      Missing trading days per ticker between each ticker's last loaded date
+      and the most recent completed trading day. One row per (ticker, missing_date).
+
+      This is the operational table read by Python_Scripts/backfill_missing_dates.py
+      to determine which dates need to be fetched from AlphaVantage and uploaded
+      to S3 for Snowpipe ingestion. Run this model before running the backfill script.
+
+      Workflow:
+        1. dbt run --select mart_data_gaps
+        2. python Python_Scripts/backfill_missing_dates.py
+        3. Wait for Snowpipe to load new rows into RAW_STOCK_DATA
+        4. dbt run  (refresh all downstream models)
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, missing_date]
+    columns:
+      - name: ticker
+        description: Stock ticker symbol with missing data
+        tests:
+          - not_null
+      - name: missing_date
+        description: Expected trading day not present in stg_stockprice for this ticker
+        tests:
+          - not_null
+      - name: last_loaded_date
+        description: The most recent date that IS present for this ticker
+      - name: overall_last_date
+        description: The most recent loaded date across all tickers in the database
+      - name: days_since_last_load
+        description: Calendar days between last_loaded_date and today; useful for alerting on stale data
+
+  - name: mart_ml_features
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
+    description: >
+      ML training and inference table. Grain: one row per (ticker, date).
+      Combines all price-derived features, fundamental snapshots, analyst signals,
+      and economic indicators alongside forward return targets at 1, 3, 6, 9, and 12-month horizons.
+
+      Usage:
+        - Training set:   WHERE dataset_split = 'training'  (has_3m_target = true)
+        - Inference set:  WHERE dataset_split = 'inference' (most recent ~63 trading days)
+        - Per-horizon:    Filter on has_6m_target / has_9m_target / has_12m_target as needed
+
+      Notes:
+        - Fundamental and analyst columns are snapshot values (refreshed when company
+          overview data is re-loaded) and do not vary by date within a snapshot period.
+        - Economic signal columns (economic_activity_index, avg_*_value) are monthly;
+          most trading-day rows will be null. Forward-fill these in your Python
+          preprocessing pipeline before model training.
+        - All return calculations use adjusted_close to account for splits and dividends.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, date]
+      - min_row_count:
+          min_rows: 400
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - not_empty_string
+      - name: date
+        description: Trading date
+        tests:
+          - not_null
+      - name: company_name
+        description: Full legal company name
+      - name: sector
+        description: GICS sector classification
+        tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: industry
+        description: Industry sub-classification
+        tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: country
+        description: Country of headquarters
+
+      # --- Price features ---
+      - name: close
+        description: Raw closing price (not adjusted)
+      - name: adjusted_close
+        description: Closing price adjusted for splits and dividends
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: volume
+        description: Shares traded on this date
+      - name: daily_return
+        description: (adjusted_close / prior_adjusted_close) - 1
+      - name: return_1m
+        description: 21-trading-day backward-looking return
+      - name: return_3m
+        description: 63-trading-day backward-looking return
+      - name: return_6m
+        description: 126-trading-day backward-looking return
+      - name: return_9m
+        description: 189-trading-day backward-looking return (momentum signal for 9m prediction horizon)
+      - name: return_12m
+        description: 252-trading-day backward-looking return (momentum signal for 12m prediction horizon)
+      - name: ma_20d
+        description: 20-day simple moving average of adjusted close
+      - name: ma_50d
+        description: 50-day simple moving average of adjusted close
+      - name: ma_200d
+        description: 200-day simple moving average of adjusted close
+      - name: bollinger_pct_b
+        description: Bollinger Band %B — position within the 2-sigma band around the 20-day MA
+      - name: price_to_ma_20d
+        description: adjusted_close / ma_20d; above 1 = price above 20-day average
+      - name: price_to_ma_50d
+        description: adjusted_close / ma_50d
+      - name: price_to_ma_200d
+        description: adjusted_close / ma_200d
+      - name: volatility_20d
+        description: 20-day realized volatility (rolling stddev of daily returns)
+      - name: volatility_60d
+        description: 60-day realized volatility
+      - name: volume_ratio_20d
+        description: Today's volume / 20-day average volume
+      - name: rsi_14
+        description: 14-period RSI; <30 oversold, >70 overbought
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              config:
+                severity: warn
+
+      # --- Fundamental features ---
+      - name: market_capitalization
+        description: Total market cap in USD (snapshot)
+      - name: shares_outstanding
+        description: Total shares outstanding (snapshot)
+      - name: shares_float
+        description: Publicly tradable float shares (snapshot)
+      - name: diluted_eps_ttm
+        description: Diluted earnings per share, trailing twelve months
+      - name: pe_ratio
+        description: Price-to-earnings ratio
+      - name: trailing_pe
+        description: Trailing twelve-month P/E
+      - name: forward_pe
+        description: Forward P/E based on analyst earnings estimates
+      - name: peg_ratio
+        description: Price/earnings-to-growth ratio
+      - name: price_to_book_ratio
+        description: Price-to-book ratio
+      - name: price_to_sales_ratio_ttm
+        description: Price-to-sales ratio, trailing twelve months
+      - name: revenue_ttm
+        description: Revenue, trailing twelve months
+      - name: ebitda
+        description: EBITDA; may be negative for unprofitable companies
+      - name: ev_to_ebitda
+        description: Enterprise value / EBITDA
+      - name: ev_to_revenue
+        description: Enterprise value / Revenue
+      - name: beta
+        description: Market beta; 1.0 = moves in line with S&P 500
+
+      # --- Quality factors ---
+      - name: profit_margin
+        description: Net profit margin as decimal (snapshot); higher = better quality
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 1
+              config:
+                severity: warn
+      - name: return_on_equity_ttm
+        description: Return on equity TTM as decimal; Buffett-style quality signal
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -50
+              max_value: 50
+              config:
+                severity: warn
+      - name: operating_margin_ttm
+        description: Operating margin TTM as decimal; operational efficiency signal
+      - name: quarterly_earnings_growth_yoy
+        description: Year-over-year quarterly earnings growth rate; earnings momentum signal
+      - name: quarterly_revenue_growth_yoy
+        description: Year-over-year quarterly revenue growth rate; top-line momentum
+      - name: dividend_yield
+        description: Annual dividend yield as decimal (e.g., 0.03 = 3%); income and quality signal
+
+      # --- 52-week price extremes ---
+      - name: week_52_high
+        description: 52-week price high from AlphaVantage overview (snapshot)
+      - name: week_52_low
+        description: 52-week price low from AlphaVantage overview (snapshot)
+      - name: ratio_to_52w_high
+        description: >
+          adjusted_close / week_52_high. Values near 1.0 = price near its 52-week high (momentum).
+          Values near 0 = deep discount from high (mean reversion opportunity or distress signal).
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 2
+              config:
+                severity: warn
+      - name: ratio_to_52w_low
+        description: >
+          adjusted_close / week_52_low. Values near 1.0 = price near its 52-week low.
+          High values indicate the stock has recovered significantly from its trough.
+
+      # --- Analyst features ---
+      - name: analyst_target_price
+        description: Consensus analyst price target (snapshot)
+      - name: net_bullish_score
+        description: Weighted analyst consensus normalized to [-2, +2]; positive = net bullish
+      - name: analyst_upside
+        description: (analyst_target_price / latest_close) - 1
+      - name: total_analyst_ratings
+        description: Total number of analyst ratings across all sentiment buckets
+      - name: percent_insiders
+        description: Percentage of shares held by insiders (0–100)
+      - name: percent_institutions
+        description: Percentage of shares held by institutions (0–100)
+      - name: total_aligned_ownership_pct
+        description: percent_insiders + percent_institutions
+
+      # --- Economic features ---
+      - name: economic_activity_index
+        description: >
+          Average across all applicable economic indicators for this industry and date.
+          Monthly cadence; null on non-reporting trading days — forward-fill before training.
+      - name: avg_leading_value
+        description: Average leading indicator value for this industry (predicts future direction)
+      - name: avg_coincident_value
+        description: Average coincident indicator value (reflects current economic state)
+      - name: avg_lagging_value
+        description: Average lagging indicator value (confirms past economic trends)
+      - name: econ_indicator_count
+        description: Number of distinct indicators contributing to the economic signal on this date
+
+      # --- Geopolitical / news sentiment features ---
+      - name: gdelt_avg_tone
+        description: Article-weighted mean tone of US-relevant GDELT events (-100 to +100); null before GDELT history
+      - name: gdelt_conflict_intensity
+        description: Article-weighted mean Goldstein scale (-10=max conflict, +10=max cooperation)
+      - name: gdelt_article_volume
+        description: Total GDELT article mentions for US-relevant events (attention/volatility proxy)
+      - name: gdelt_pct_conflict
+        description: Share of GDELT events classified as conflictual (QuadClass 3 or 4)
+      - name: gdelt_us_china_tone
+        description: Bilateral US–China event tone (article-weighted); null if no bilateral events that day
+      - name: gdelt_us_iran_tone
+        description: Bilateral US–Iran event tone
+      - name: gdelt_us_russia_tone
+        description: Bilateral US–Russia event tone
+      - name: gdelt_us_europe_tone
+        description: US–Europe regional aggregated event tone (EU/NATO member countries)
+      - name: gdelt_us_mideast_tone
+        description: US–Middle East regional aggregated tone (Iran, Saudi Arabia, Israel, Iraq, etc.)
+      - name: gdelt_us_apac_tone
+        description: US–Asia Pacific regional aggregated tone (China, Japan, India, Korea, etc.)
+      - name: av_market_sentiment
+        description: AlphaVantage financial_markets topic sentiment (-1=very bearish, +1=very bullish); null pre-2022
+      - name: av_macro_sentiment
+        description: AlphaVantage economy_macro topic sentiment
+      - name: av_monetary_sentiment
+        description: AlphaVantage economy_monetary topic sentiment (Fed policy, interest rate news)
+      - name: av_fiscal_sentiment
+        description: AlphaVantage economy_fiscal topic sentiment (government spending, tax news)
+      - name: av_earnings_sentiment
+        description: AlphaVantage earnings topic sentiment — most relevant for ticker-level prediction
+      - name: av_energy_sentiment
+        description: AlphaVantage energy_transportation topic sentiment
+      - name: av_news_volume
+        description: Total article count across all AV topics for this date (attention proxy)
+      - name: av_bullish_pct
+        description: Average share of bullish/somewhat-bullish articles across AV topics
+      - name: av_bearish_pct
+        description: Average share of bearish/somewhat-bearish articles across AV topics
+
+      # --- Asset class tag ---
+      - name: asset_class
+        description: Always 'EQUITY' — use to distinguish from mart_fixed_income ('FIXED_INCOME')
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['EQUITY']
+
+      # --- FRED macro / risk signals ---
+      - name: vix
+        description: CBOE Volatility Index — market fear gauge; >30 signals elevated risk
+      - name: oil_price_wti
+        description: WTI crude oil spot price (USD/barrel)
+      - name: oil_price_brent
+        description: Brent crude oil spot price (USD/barrel)
+      - name: inflation_breakeven_10y
+        description: 10-year breakeven inflation rate (%) — market inflation expectations
+      - name: hy_credit_spread
+        description: ICE BofA US High Yield option-adjusted spread (%) — spikes during credit stress
+
+      # --- Fixed income / yield curve signals ---
+      - name: yield_2y
+        description: 2-year Treasury yield (%) — sensitive to Fed policy expectations
+      - name: yield_10y
+        description: 10-year Treasury yield (%) — benchmark risk-free rate for equity discount models
+      - name: fed_funds_rate
+        description: Effective federal funds rate (%)
+      - name: spread_2s10s
+        description: 10y minus 2y yield (pp); negative = inverted curve = recession risk
+      - name: spread_3m10y
+        description: 10y minus 3m yield (pp); Fed's preferred recession leading indicator
+      - name: is_2s10s_inverted
+        description: True when yield curve is inverted on 2s10s
+      - name: term_premium
+        description: 10y yield minus fed funds rate (pp); duration compensation signal
+      - name: yield_10y_1d_chg_bps
+        description: 1-day change in 10y yield (basis points) — rate shock signal
+
+      # --- Target variables (all prediction horizons) ---
+      - name: forward_return_1m
+        description: >
+          21-trading-day forward return. Null for the most recent ~21 trading days.
+      - name: forward_return_3m
+        description: >
+          Primary ML target: (adjusted_close 63 trading days ahead / adjusted_close today) - 1.
+          Null for the most recent ~63 trading days.
+      - name: forward_return_6m
+        description: >
+          126-trading-day forward return (~6 calendar months).
+          Null for the most recent ~6 months.
+      - name: forward_return_9m
+        description: >
+          189-trading-day forward return (~9 calendar months).
+          Null for the most recent ~9 months.
+      - name: forward_return_12m
+        description: >
+          252-trading-day forward return (~12 calendar months).
+          Null for the most recent ~12 months.
+      - name: has_1m_target
+        description: True when a complete 1-month forward window exists.
+      - name: has_3m_target
+        description: True when a complete 3-month forward window exists; false for inference rows.
+      - name: has_6m_target
+        description: True when a complete 6-month forward window exists.
+      - name: has_9m_target
+        description: True when a complete 9-month forward window exists.
+      - name: has_12m_target
+        description: True when a complete 12-month forward window exists.
+      - name: equity_risk_premium
+        description: >
+          (1 / forward_pe) - (yield_10y / 100). Earnings yield minus the risk-free rate.
+          Positive = equities offer a premium over bonds (historically bullish for stocks).
+          Negative = bonds offer better risk-adjusted returns (historically a headwind for equities).
+          Null when forward_pe <= 0 (loss-making companies) or yield_10y is unavailable.
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -0.5
+              max_value: 0.5
+              config:
+                severity: warn
+
+      - name: dataset_split
+        description: "'training' when has_3m_target = true; 'inference' for the live prediction window"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['training', 'inference']
+      - name: dataset_split_9m
+        description: >
+          Per-horizon split for 9-month prediction models. 'training' when has_9m_target = true
+          (requires ~9 months of future price data to exist). 'inference' for the most recent ~189 trading days.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['training', 'inference']
+      - name: dataset_split_12m
+        description: >
+          Per-horizon split for 12-month prediction models. 'training' when has_12m_target = true
+          (requires ~12 months of future price data). 'inference' for the most recent ~252 trading days.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['training', 'inference']

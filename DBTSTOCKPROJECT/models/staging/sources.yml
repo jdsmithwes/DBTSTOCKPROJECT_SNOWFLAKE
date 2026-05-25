@@ -1,0 +1,121 @@
+version: 2
+
+sources:
+  - name: ALPHAVANTAGE_API
+    database: DBT_STOCKPROJECT
+    schema: PUBLIC
+    description: Raw stock market data ingested from AlphaVantage API
+    tables:
+      - name: RAW_STOCK_DATA
+        description: Raw daily OHLCV stock price records
+        freshness:
+          warn_after: {count: 24, period: hour}
+          error_after: {count: 48, period: hour}
+        loaded_at_field: load_timestamp
+        tests:
+          - min_row_count:
+              min_rows: 400
+      - name: RAW_COMPANY_OVERVIEW
+        description: Raw company fundamentals payload (JSON) from AlphaVantage
+        freshness:
+          warn_after: {count: 60, period: day}
+          error_after: {count: 90, period: day}
+        loaded_at_field: load_timestamp
+        tests:
+          - min_row_count:
+              min_rows: 400
+
+  - name: ALPHAVANTAGE_FIXED_INCOME
+    database: DBT_STOCKPROJECT
+    schema: PUBLIC
+    description: Fixed income data ingested from AlphaVantage API (treasury yields, fed funds, CPI)
+    tables:
+      - name: RAW_TREASURY_YIELDS
+        description: Daily US Treasury yield curve observations across 6 maturities
+        freshness:
+          warn_after: {count: 48, period: hour}
+          error_after: {count: 96, period: hour}
+        loaded_at_field: load_timestamp
+        tests:
+          - min_row_count:
+              min_rows: 100
+      - name: RAW_FED_FUNDS_RATE
+        description: Daily effective federal funds rate
+        freshness:
+          warn_after: {count: 48, period: hour}
+          error_after: {count: 96, period: hour}
+        loaded_at_field: load_timestamp
+        tests:
+          - min_row_count:
+              min_rows: 100
+      - name: RAW_CPI
+        description: Monthly Consumer Price Index (all urban consumers)
+        freshness:
+          warn_after: {count: 45, period: day}
+          error_after: {count: 60, period: day}
+        loaded_at_field: load_timestamp
+        tests:
+          - min_row_count:
+              min_rows: 12
+
+  - name: FRED_MACRO
+    database: DBT_STOCKPROJECT
+    schema: PUBLIC
+    description: Macro and risk signals ingested from the Federal Reserve FRED API
+    tables:
+      - name: RAW_FRED_MACRO
+        description: Daily observations for VIX, crude oil prices, inflation breakeven, and HY credit spread
+        freshness:
+          warn_after: {count: 48, period: hour}
+          error_after: {count: 96, period: hour}
+        loaded_at_field: load_timestamp
+        tests:
+          - min_row_count:
+              min_rows: 100
+
+  - name: GDELT
+    database: DBT_STOCKPROJECT
+    schema: PUBLIC
+    description: >
+      Global Database of Events, Language, and Tone — daily aggregated geopolitical
+      event signals filtered to US-relevant events. Loaded by fetch_gdelt_events.py.
+    tables:
+      - name: RAW_GDELT_DAILY
+        description: >
+          One row per calendar date. Aggregated from GDELT 1.0 daily export CSVs.
+          Covers US-relevant events only (actor or action geography = US).
+        freshness:
+          warn_after: {count: 48, period: hour}
+          error_after: {count: 96, period: hour}
+        loaded_at_field: load_timestamp
+        tests:
+          - min_row_count:
+              min_rows: 100
+
+  - name: AV_NEWS
+    database: DBT_STOCKPROJECT
+    schema: PUBLIC
+    description: >
+      Market news sentiment aggregated by (date, topic) from the AlphaVantage
+      NEWS_SENTIMENT endpoint. Loaded by fetch_av_news_sentiment.py.
+      History available from ~2022-01-01 onward.
+    tables:
+      - name: RAW_AV_NEWS_SENTIMENT
+        description: One row per (date, topic). Pre-aggregated from article-level API responses.
+        freshness:
+          warn_after: {count: 48, period: hour}
+          error_after: {count: 96, period: hour}
+        loaded_at_field: load_timestamp
+        tests:
+          - min_row_count:
+              min_rows: 10
+
+  - name: ECONOMIC_INDICATORS
+    database: INDUSTRYBASED_ECONOMIC_LEADING_INDICATORS
+    schema: PUBLIC
+    description: Industry-level economic leading indicator data from Snowflake Marketplace
+    tables:
+      - name: INDUSTRY_LEADING_INDICATORS_METADATA
+        description: Descriptive metadata for each economic indicator
+      - name: INDUSTRY_LEADING_INDICATORS_TIMESERIES
+        description: Time series observations for each economic indicator
