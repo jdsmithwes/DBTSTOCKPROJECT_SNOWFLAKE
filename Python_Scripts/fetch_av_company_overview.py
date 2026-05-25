@@ -199,11 +199,8 @@ def load_to_snowflake(payloads: list[dict]) -> None:
     conn = _snowflake_conn()
     try:
         cur = conn.cursor()
-        params = [
-            (json.dumps(payload), filename, idx + 1)
-            for idx, payload in enumerate(payloads)
-        ]
-        cur.executemany(insert_sql, params)
+        for idx, payload in enumerate(payloads):
+            cur.execute(insert_sql, (json.dumps(payload), filename, idx + 1))
         log.info(f"  ✅ {len(payloads):,} rows loaded")
     finally:
         conn.close()

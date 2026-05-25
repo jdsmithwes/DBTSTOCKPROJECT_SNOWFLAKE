@@ -87,7 +87,8 @@ SNOWFLAKE_DATABASE  = os.environ["SNOWFLAKE_DATABASE"]
 ALPHAVANTAGE_API_KEY = os.environ["ALPHAVANTAGE_API_KEY"]
 
 # AV news history is sparse before 2022; keep this floor even when equity data goes earlier
-AV_NEWS_START_DATE = os.environ.get("AV_NEWS_START_DATE", "2022-01-01")
+AV_NEWS_START_DATE   = os.environ.get("AV_NEWS_START_DATE",   "2022-01-01")
+AV_FORCE_START_DATE  = os.environ.get("AV_FORCE_START_DATE",  "")  # overrides watermark when set
 AV_REQUEST_DELAY   = float(os.environ.get("AV_REQUEST_DELAY", "2.0"))
 # Days per API window. Premium keys support up to 1000 articles per call;
 # 30-day windows keep each call well within that limit for all topic volumes.
@@ -180,7 +181,9 @@ def detect_latest_dates() -> dict[str, str]:
 
     dates: dict[str, str] = {}
     for topic in AV_TOPICS:
-        if topic in loaded:
+        if AV_FORCE_START_DATE:
+            start = AV_FORCE_START_DATE
+        elif topic in loaded:
             start = (date.fromisoformat(loaded[topic]) + timedelta(days=1)).isoformat()
         else:
             start = AV_NEWS_START_DATE
