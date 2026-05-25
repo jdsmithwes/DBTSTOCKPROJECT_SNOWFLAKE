@@ -41,9 +41,12 @@ with_rolling as (
         -- Backward-looking momentum returns
         (adjusted_close / nullif(lag(adjusted_close, 21) over (partition by ticker order by date), 0)) - 1 as return_1m,
         (adjusted_close / nullif(lag(adjusted_close, 63) over (partition by ticker order by date), 0)) - 1 as return_3m,
-        (adjusted_close / nullif(lag(adjusted_close, 126) over (partition by ticker order by date), 0)) - 1 as return_6m,
-        (adjusted_close / nullif(lag(adjusted_close, 189) over (partition by ticker order by date), 0)) - 1 as return_9m,
-        (adjusted_close / nullif(lag(adjusted_close, 252) over (partition by ticker order by date), 0)) - 1 as return_12m,
+        (adjusted_close / nullif(lag(adjusted_close, 126) over (partition by ticker order by date), 0))
+        - 1 as return_6m,
+        (adjusted_close / nullif(lag(adjusted_close, 189) over (partition by ticker order by date), 0))
+        - 1 as return_9m,
+        (adjusted_close / nullif(lag(adjusted_close, 252) over (partition by ticker order by date), 0))
+        - 1 as return_12m,
 
         -- Moving averages of adjusted close
         avg(adjusted_close)

@@ -70,13 +70,13 @@ select
     -- Real Fed Funds Rate: positive = restrictive monetary policy,
     -- negative = accommodative (Fed "behind the curve" on inflation)
     case
-        when cpi_yoy_pct is not null
+        when cpi_yoy_pct is not NULL
             then fed_funds_rate - cpi_yoy_pct
     end as real_fed_funds_rate,
 
     -- How far CPI is above or below the Fed's 2% inflation target
     case
-        when cpi_yoy_pct is not null
+        when cpi_yoy_pct is not NULL
             then cpi_yoy_pct - 2.0
     end as inflation_vs_target,
 
@@ -85,47 +85,52 @@ select
 
     -- Inflation severity relative to the Fed's 2% mandate
     case
-        when cpi_yoy_pct is null     then null
-        when cpi_yoy_pct < 1.0       then 'DEFLATIONARY'
-        when cpi_yoy_pct < 2.0       then 'LOW'
-        when cpi_yoy_pct <= 3.0      then 'TARGET'
-        when cpi_yoy_pct <= 5.0      then 'ELEVATED'
-        else                              'HIGH'
+        when cpi_yoy_pct is NULL then NULL
+        when cpi_yoy_pct < 1.0 then 'DEFLATIONARY'
+        when cpi_yoy_pct < 2.0 then 'LOW'
+        when cpi_yoy_pct <= 3.0 then 'TARGET'
+        when cpi_yoy_pct <= 5.0 then 'ELEVATED'
+        else 'HIGH'
     end as inflation_regime,
 
     -- Whether Fed policy is tightening, neutral, or easing relative to inflation
     -- Uses ±0.5 pp real-rate buffer to avoid excessive regime flipping
     case
-        when cpi_yoy_pct is null                        then null
-        when (fed_funds_rate - cpi_yoy_pct) >  0.5     then 'RESTRICTIVE'
-        when (fed_funds_rate - cpi_yoy_pct) < -0.5     then 'ACCOMMODATIVE'
-        else                                                  'NEUTRAL'
+        when cpi_yoy_pct is NULL then NULL
+        when (fed_funds_rate - cpi_yoy_pct) > 0.5 then 'RESTRICTIVE'
+        when (fed_funds_rate - cpi_yoy_pct) < -0.5 then 'ACCOMMODATIVE'
+        else 'NEUTRAL'
     end as policy_stance,
 
     -- True when inflation is above the 2% target AND the real rate is still negative —
     -- the Fed is effectively subsidising borrowing while prices are rising
     case
-        when cpi_yoy_pct is null then false
+        when cpi_yoy_pct is NULL then FALSE
         else coalesce(
             (fed_funds_rate - cpi_yoy_pct) < 0 and cpi_yoy_pct > 2.0,
-            false
+            FALSE
         )
     end as fed_behind_curve,
 
     -- Plain-English economic health label for retirement portfolio context.
     -- Combines inflation regime with Fed policy direction.
     case
-        when cpi_yoy_pct is null then null
-        when cpi_yoy_pct > 5.0
-             and fed_regime != 'HIKING'                                                then 'STAGFLATION RISK'
-        when cpi_yoy_pct > 3.0
-             and fed_regime = 'HIKING'                                                 then 'OVERHEATING — Fed hiking'
-        when cpi_yoy_pct < 1.0
-             and fed_regime = 'CUTTING'                                                then 'DEFLATION RISK — Fed cutting'
-        when cpi_yoy_pct between 2.0 and 3.0
-             and (fed_funds_rate - cpi_yoy_pct) > 0.5                                 then 'NORMALIZING — restrictive policy working'
-        when cpi_yoy_pct <= 3.0
-             and (fed_funds_rate - cpi_yoy_pct) between -0.5 and 2.0                  then 'STABLE'
+        when cpi_yoy_pct is NULL then NULL
+        when
+            cpi_yoy_pct > 5.0
+            and fed_regime != 'HIKING' then 'STAGFLATION RISK'
+        when
+            cpi_yoy_pct > 3.0
+            and fed_regime = 'HIKING' then 'OVERHEATING — Fed hiking'
+        when
+            cpi_yoy_pct < 1.0
+            and fed_regime = 'CUTTING' then 'DEFLATION RISK — Fed cutting'
+        when
+            cpi_yoy_pct between 2.0 and 3.0
+            and (fed_funds_rate - cpi_yoy_pct) > 0.5 then 'NORMALIZING — restrictive policy working'
+        when
+            cpi_yoy_pct <= 3.0
+            and (fed_funds_rate - cpi_yoy_pct) between -0.5 and 2.0 then 'STABLE'
         else 'TRANSITIONING'
     end as economic_health_label
 

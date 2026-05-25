@@ -1,0 +1,18 @@
+# Runtime dependencies for Python_Scripts/ and dbt
+# Pinned to match local dev environment (Python 3.11)
+
+# dbt
+dbt-snowflake==1.10.3
+
+# Snowflake connector (used directly by Python scripts)
+snowflake-connector-python==4.5.0
+
+# AWS / S3 (backfill_missing_dates.py uploads to S3 before COPY INTO)
+boto3==1.42.4
+
+# HTTP (async AlphaVantage fetches, FRED, GDELT)
+aiohttp>=3.9.0
+requests>=2.31.0
+
+# Data handling
+pandas>=2.0.0

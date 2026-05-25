@@ -327,6 +327,10 @@ models:
           combination_of_columns: [ticker, date]
       - min_row_count:
           min_rows: 400
+      - recency:
+          datepart: day
+          timestamp_column: date
+          interval: 7
     columns:
       - name: ticker
         description: Stock ticker symbol
@@ -376,8 +380,20 @@ models:
         description: 126-trading-day backward-looking return
       - name: return_9m
         description: 189-trading-day backward-looking return (momentum signal for 9m prediction horizon)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1
+              max_value: 5
+              config:
+                severity: warn
       - name: return_12m
         description: 252-trading-day backward-looking return (momentum signal for 12m prediction horizon)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -1
+              max_value: 5
+              config:
+                severity: warn
       - name: ma_20d
         description: 20-day simple moving average of adjusted close
       - name: ma_50d
@@ -458,18 +474,42 @@ models:
                 severity: warn
       - name: operating_margin_ttm
         description: Operating margin TTM as decimal; operational efficiency signal
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 1
+              config:
+                severity: warn
       - name: quarterly_earnings_growth_yoy
         description: Year-over-year quarterly earnings growth rate; earnings momentum signal
       - name: quarterly_revenue_growth_yoy
         description: Year-over-year quarterly revenue growth rate; top-line momentum
       - name: dividend_yield
         description: Annual dividend yield as decimal (e.g., 0.03 = 3%); income and quality signal
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+              config:
+                severity: warn
 
       # --- 52-week price extremes ---
       - name: week_52_high
         description: 52-week price high from AlphaVantage overview (snapshot)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+              config:
+                severity: warn
       - name: week_52_low
         description: 52-week price low from AlphaVantage overview (snapshot)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+              config:
+                severity: warn
       - name: ratio_to_52w_high
         description: >
           adjusted_close / week_52_high. Values near 1.0 = price near its 52-week high (momentum).
@@ -484,6 +524,12 @@ models:
         description: >
           adjusted_close / week_52_low. Values near 1.0 = price near its 52-week low.
           High values indicate the stock has recovered significantly from its trough.
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+              config:
+                severity: warn
 
       # --- Analyst features ---
       - name: analyst_target_price
