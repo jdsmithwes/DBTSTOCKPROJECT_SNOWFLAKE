@@ -29,5 +29,5 @@ dbt_stockproject:
       role: DBT_ROLE
       database: DBT_STOCKPROJECT
       warehouse: DBT_STOCKPROJECT
-      schema: DBT_DEV_JDS_STAGING
+      schema: JDS_STAGING
       threads: 8
