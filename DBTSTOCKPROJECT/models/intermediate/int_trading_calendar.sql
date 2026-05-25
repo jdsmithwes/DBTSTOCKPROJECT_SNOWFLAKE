@@ -25,11 +25,11 @@ holidays as (
 valid_trading_days as (
 
     select ds.calendar_date
-    from date_spine  as ds
+    from date_spine as ds
     left join holidays as h on ds.calendar_date = h.holiday_date
     where
         dayofweek(ds.calendar_date) not in (0, 6)
-        and h.holiday_date is null
+        and h.holiday_date is NULL
 
 ),
 
@@ -44,6 +44,6 @@ last_completed_trading_day as (
 )
 
 select vt.calendar_date as trading_date
-from valid_trading_days          as vt
+from valid_trading_days as vt
 cross join last_completed_trading_day as lctd
 where vt.calendar_date <= lctd.last_trading_day

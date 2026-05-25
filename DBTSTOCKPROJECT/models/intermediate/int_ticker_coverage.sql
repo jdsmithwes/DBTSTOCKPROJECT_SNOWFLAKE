@@ -39,7 +39,7 @@ ticker_bounds as (
         ticker,
         min(trading_date) as first_date,
         max(trading_date) as last_date,
-        count(*)          as trading_days_loaded
+        count(*) as trading_days_loaded
     from actual_prices
     group by ticker
 
@@ -52,10 +52,11 @@ expected_days as (
     select
         tb.ticker,
         count(tc.trading_date) as expected_trading_days
-    from ticker_bounds    as tb
-    join trading_calendar as tc
-        on  tc.trading_date >= tb.first_date
-        and tc.trading_date <= (select dataset_end_date from dataset_end)
+    from ticker_bounds as tb
+    inner join trading_calendar as tc
+        on
+            tb.first_date <= tc.trading_date
+            and tc.trading_date <= (select dataset_end_date from dataset_end)
     group by tb.ticker
 
 ),
@@ -71,11 +72,11 @@ coverage as (
         round(
             tb.trading_days_loaded::float / nullif(ed.expected_trading_days, 0),
             4
-        )                                                           as coverage_pct,
-        datediff('day', tb.last_date, de.dataset_end_date)         as calendar_days_since_last_trade,
+        ) as coverage_pct,
+        datediff('day', tb.last_date, de.dataset_end_date) as calendar_days_since_last_trade,
         de.dataset_end_date
     from ticker_bounds as tb
-    join expected_days as ed    on tb.ticker = ed.ticker
+    inner join expected_days as ed on tb.ticker = ed.ticker
     cross join dataset_end as de
 
 )
@@ -90,8 +91,9 @@ select
     calendar_days_since_last_trade,
     dataset_end_date,
     case
-        when calendar_days_since_last_trade <= 14
-             and coverage_pct >= 0.95
+        when
+            calendar_days_since_last_trade <= 14
+            and coverage_pct >= 0.95
             then 'COMPLETE'
         when calendar_days_since_last_trade > 63
             then 'DELISTED'

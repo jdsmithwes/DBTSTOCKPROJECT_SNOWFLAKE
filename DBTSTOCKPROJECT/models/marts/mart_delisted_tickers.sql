@@ -29,11 +29,11 @@ price_stats as (
 
     select
         ticker,
-        max(adjusted_close)                                  as peak_adjusted_close,
-        max(case when rn = 1  then close          end)       as last_close,
-        max(case when rn = 1  then adjusted_close end)       as last_adjusted_close,
-        max(case when rn = 1  then volume         end)       as last_volume,
-        max(case when rn = 31 then adjusted_close end)       as adjusted_close_30d_before
+        max(adjusted_close) as peak_adjusted_close,
+        max(case when rn = 1 then close end) as last_close,
+        max(case when rn = 1 then adjusted_close end) as last_adjusted_close,
+        max(case when rn = 1 then volume end) as last_volume,
+        max(case when rn = 31 then adjusted_close end) as adjusted_close_30d_before
     from (
         select
             ticker,
@@ -43,7 +43,7 @@ price_stats as (
             volume,
             row_number() over (partition by ticker order by date desc) as rn
         from {{ ref('stg_stockprice') }}
-        where ticker in (select ticker from coverage)
+        where ticker in (select coverage.ticker from coverage)
     )
     group by ticker
 
@@ -51,7 +51,12 @@ price_stats as (
 
 company as (
 
-    select ticker, company_name, sector, industry, exchange
+    select
+        ticker,
+        company_name,
+        sector,
+        industry,
+        exchange
     from {{ ref('stg_companyoverview') }}
 
 )
@@ -64,7 +69,7 @@ select
     co.exchange,
     c.first_date,
     c.last_date,
-    c.trading_days_loaded                                                      as trading_days,
+    c.trading_days_loaded as trading_days,
     c.calendar_days_since_last_trade,
     ps.last_close,
     ps.last_volume,
@@ -72,13 +77,13 @@ select
     round(
         ps.last_adjusted_close / nullif(ps.peak_adjusted_close, 0),
         4
-    )                                                                          as price_pct_of_peak_at_exit,
+    ) as price_pct_of_peak_at_exit,
     round(
         ps.last_adjusted_close / nullif(ps.adjusted_close_30d_before, 0) - 1,
         4
-    )                                                                          as price_30d_return_at_exit,
+    ) as price_30d_return_at_exit,
     case
-        when co.ticker is null
+        when co.ticker is NULL
             then 'DELISTED_NO_DATA'
         when ps.last_adjusted_close / nullif(ps.peak_adjusted_close, 0) >= 0.85
             then 'ACQUISITION_OR_MERGER'
@@ -87,7 +92,7 @@ select
         when (ps.last_adjusted_close / nullif(ps.adjusted_close_30d_before, 0) - 1) < -0.15
             then 'DISTRESSED_EXIT'
         else 'UNKNOWN'
-    end                                                                        as inferred_reason
-from coverage           as c
-left join company       as co on c.ticker = co.ticker
-left join price_stats   as ps on c.ticker = ps.ticker
+    end as inferred_reason
+from coverage as c
+left join company as co on c.ticker = co.ticker
+left join price_stats as ps on c.ticker = ps.ticker

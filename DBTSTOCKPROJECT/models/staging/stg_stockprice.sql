@@ -19,5 +19,5 @@ with source_data as (
 select
     *,
     'AlphaVantage API' as data_source,
-    current_timestamp    as load_date
+    current_timestamp as load_date
 from source_data

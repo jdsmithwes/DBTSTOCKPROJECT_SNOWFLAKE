@@ -168,11 +168,11 @@ spine as (
         im.indicator_industry
 
     from price_features as pf
-    inner join complete_tickers                        as ct  on pf.ticker = ct.ticker
-    left join company_nonfinancial                     as cn  on pf.ticker = cn.ticker
-    left join company_valuation                        as cv  on pf.ticker = cv.ticker
-    left join {{ ref('int_analyst_signals') }}         as sig on pf.ticker = sig.ticker
-    left join {{ ref('int_industry_mapping') }}        as im  on upper(trim(cn.industry)) = im.company_industry
+    inner join complete_tickers as ct on pf.ticker = ct.ticker
+    left join company_nonfinancial as cn on pf.ticker = cn.ticker
+    left join company_valuation as cv on pf.ticker = cv.ticker
+    left join {{ ref('int_analyst_signals') }} as sig on pf.ticker = sig.ticker
+    left join {{ ref('int_industry_mapping') }} as im on upper(trim(cn.industry)) = im.company_industry
 
 )
 
@@ -237,7 +237,7 @@ select
     sp.week_52_high,
     sp.week_52_low,
     case when sp.week_52_high > 0 then sp.adjusted_close / sp.week_52_high end as ratio_to_52w_high,
-    case when sp.week_52_low  > 0 then sp.adjusted_close / sp.week_52_low  end as ratio_to_52w_low,
+    case when sp.week_52_low > 0 then sp.adjusted_close / sp.week_52_low end as ratio_to_52w_low,
 
     -- Analyst features
     sp.analyst_target_price,
@@ -314,20 +314,20 @@ select
     -- Positive = equities cheap vs. bonds; negative = equities expensive.
     -- Null when forward_pe <= 0 (loss-making) or yield_10y is unavailable.
     case
-        when sp.forward_pe > 0 and yc.yield_10y is not null
+        when sp.forward_pe > 0 and yc.yield_10y is not NULL
             then (1.0 / sp.forward_pe) - (yc.yield_10y / 100.0)
     end as equity_risk_premium,
 
     -- dataset_split: 'training' when the 3m target exists; 'inference' for live prediction window
-    case when fr.has_3m_target  then 'training' else 'inference' end as dataset_split,
+    case when fr.has_3m_target then 'training' else 'inference' end as dataset_split,
 
     -- Per-horizon splits for models trained at longer horizons
-    case when fr.has_9m_target  then 'training' else 'inference' end as dataset_split_9m,
+    case when fr.has_9m_target then 'training' else 'inference' end as dataset_split_9m,
     case when fr.has_12m_target then 'training' else 'inference' end as dataset_split_12m
 
 from spine as sp
-left join forward_returns                          as fr  on sp.ticker = fr.ticker and sp.date = fr.date
-left join {{ ref('int_economic_signals') }}        as es  on sp.indicator_industry = es.indicator_industry and sp.date = es.date
-left join {{ ref('int_macro_signals') }}           as ms  on sp.date = ms.date
-left join {{ ref('int_yield_curve') }}             as yc  on sp.date = yc.date
-left join {{ ref('int_news_sentiment') }}          as ns  on sp.date = ns.date
+left join forward_returns as fr on sp.ticker = fr.ticker and sp.date = fr.date
+left join {{ ref('int_economic_signals') }} as es on sp.indicator_industry = es.indicator_industry and sp.date = es.date
+left join {{ ref('int_macro_signals') }} as ms on sp.date = ms.date
+left join {{ ref('int_yield_curve') }} as yc on sp.date = yc.date
+left join {{ ref('int_news_sentiment') }} as ns on sp.date = ns.date

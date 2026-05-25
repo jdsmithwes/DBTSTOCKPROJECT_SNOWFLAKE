@@ -50,7 +50,7 @@ with_signals as (
         ) as inversion_days_trailing_1y,
 
         case
-            when cpi_yoy_pct is not null
+            when cpi_yoy_pct is not NULL
                 then yield_10y - (cpi_yoy_pct / 100)
         end as approx_real_yield_10y,
 
@@ -67,50 +67,146 @@ with_signals as (
 -- full market context without requiring a separate join.
 securities as (
 
-    select date, 'US Treasury 3M'     as security_name, 'TREASURY_YIELD'  as instrument_type, '3month'  as maturity_term, yield_3m        as rate_value,
-           spread_2s10s, spread_3m10y, spread_2s30s, term_premium, is_2s10s_inverted, is_3m10y_inverted,
-           yield_10y_1d_chg_bps, yield_10y_5d_chg_bps, yield_2y_1d_chg_bps,
-           cpi_yoy_pct, approx_real_yield_10y, fed_regime, inversion_days_trailing_1y, fi_attractive_flag
+    select
+        date,
+        'US Treasury 3M' as security_name,
+        'TREASURY_YIELD' as instrument_type,
+        '3month' as maturity_term,
+        yield_3m as rate_value,
+        spread_2s10s,
+        spread_3m10y,
+        spread_2s30s,
+        term_premium,
+        is_2s10s_inverted,
+        is_3m10y_inverted,
+        yield_10y_1d_chg_bps,
+        yield_10y_5d_chg_bps,
+        yield_2y_1d_chg_bps,
+        cpi_yoy_pct,
+        approx_real_yield_10y,
+        fed_regime,
+        inversion_days_trailing_1y,
+        fi_attractive_flag
     from with_signals
 
     union all
 
-    select date, 'US Treasury 2Y'     as security_name, 'TREASURY_YIELD'  as instrument_type, '2year'   as maturity_term, yield_2y        as rate_value,
-           spread_2s10s, spread_3m10y, spread_2s30s, term_premium, is_2s10s_inverted, is_3m10y_inverted,
-           yield_10y_1d_chg_bps, yield_10y_5d_chg_bps, yield_2y_1d_chg_bps,
-           cpi_yoy_pct, approx_real_yield_10y, fed_regime, inversion_days_trailing_1y, fi_attractive_flag
+    select
+        date,
+        'US Treasury 2Y' as security_name,
+        'TREASURY_YIELD' as instrument_type,
+        '2year' as maturity_term,
+        yield_2y as rate_value,
+        spread_2s10s,
+        spread_3m10y,
+        spread_2s30s,
+        term_premium,
+        is_2s10s_inverted,
+        is_3m10y_inverted,
+        yield_10y_1d_chg_bps,
+        yield_10y_5d_chg_bps,
+        yield_2y_1d_chg_bps,
+        cpi_yoy_pct,
+        approx_real_yield_10y,
+        fed_regime,
+        inversion_days_trailing_1y,
+        fi_attractive_flag
     from with_signals
 
     union all
 
-    select date, 'US Treasury 5Y'     as security_name, 'TREASURY_YIELD'  as instrument_type, '5year'   as maturity_term, yield_5y        as rate_value,
-           spread_2s10s, spread_3m10y, spread_2s30s, term_premium, is_2s10s_inverted, is_3m10y_inverted,
-           yield_10y_1d_chg_bps, yield_10y_5d_chg_bps, yield_2y_1d_chg_bps,
-           cpi_yoy_pct, approx_real_yield_10y, fed_regime, inversion_days_trailing_1y, fi_attractive_flag
+    select
+        date,
+        'US Treasury 5Y' as security_name,
+        'TREASURY_YIELD' as instrument_type,
+        '5year' as maturity_term,
+        yield_5y as rate_value,
+        spread_2s10s,
+        spread_3m10y,
+        spread_2s30s,
+        term_premium,
+        is_2s10s_inverted,
+        is_3m10y_inverted,
+        yield_10y_1d_chg_bps,
+        yield_10y_5d_chg_bps,
+        yield_2y_1d_chg_bps,
+        cpi_yoy_pct,
+        approx_real_yield_10y,
+        fed_regime,
+        inversion_days_trailing_1y,
+        fi_attractive_flag
     from with_signals
 
     union all
 
-    select date, 'US Treasury 7Y'     as security_name, 'TREASURY_YIELD'  as instrument_type, '7year'   as maturity_term, yield_7y        as rate_value,
-           spread_2s10s, spread_3m10y, spread_2s30s, term_premium, is_2s10s_inverted, is_3m10y_inverted,
-           yield_10y_1d_chg_bps, yield_10y_5d_chg_bps, yield_2y_1d_chg_bps,
-           cpi_yoy_pct, approx_real_yield_10y, fed_regime, inversion_days_trailing_1y, fi_attractive_flag
+    select
+        date,
+        'US Treasury 7Y' as security_name,
+        'TREASURY_YIELD' as instrument_type,
+        '7year' as maturity_term,
+        yield_7y as rate_value,
+        spread_2s10s,
+        spread_3m10y,
+        spread_2s30s,
+        term_premium,
+        is_2s10s_inverted,
+        is_3m10y_inverted,
+        yield_10y_1d_chg_bps,
+        yield_10y_5d_chg_bps,
+        yield_2y_1d_chg_bps,
+        cpi_yoy_pct,
+        approx_real_yield_10y,
+        fed_regime,
+        inversion_days_trailing_1y,
+        fi_attractive_flag
     from with_signals
 
     union all
 
-    select date, 'US Treasury 10Y'    as security_name, 'TREASURY_YIELD'  as instrument_type, '10year'  as maturity_term, yield_10y       as rate_value,
-           spread_2s10s, spread_3m10y, spread_2s30s, term_premium, is_2s10s_inverted, is_3m10y_inverted,
-           yield_10y_1d_chg_bps, yield_10y_5d_chg_bps, yield_2y_1d_chg_bps,
-           cpi_yoy_pct, approx_real_yield_10y, fed_regime, inversion_days_trailing_1y, fi_attractive_flag
+    select
+        date,
+        'US Treasury 10Y' as security_name,
+        'TREASURY_YIELD' as instrument_type,
+        '10year' as maturity_term,
+        yield_10y as rate_value,
+        spread_2s10s,
+        spread_3m10y,
+        spread_2s30s,
+        term_premium,
+        is_2s10s_inverted,
+        is_3m10y_inverted,
+        yield_10y_1d_chg_bps,
+        yield_10y_5d_chg_bps,
+        yield_2y_1d_chg_bps,
+        cpi_yoy_pct,
+        approx_real_yield_10y,
+        fed_regime,
+        inversion_days_trailing_1y,
+        fi_attractive_flag
     from with_signals
 
     union all
 
-    select date, 'US Treasury 30Y'    as security_name, 'TREASURY_YIELD'  as instrument_type, '30year'  as maturity_term, yield_30y       as rate_value,
-           spread_2s10s, spread_3m10y, spread_2s30s, term_premium, is_2s10s_inverted, is_3m10y_inverted,
-           yield_10y_1d_chg_bps, yield_10y_5d_chg_bps, yield_2y_1d_chg_bps,
-           cpi_yoy_pct, approx_real_yield_10y, fed_regime, inversion_days_trailing_1y, fi_attractive_flag
+    select
+        date,
+        'US Treasury 30Y' as security_name,
+        'TREASURY_YIELD' as instrument_type,
+        '30year' as maturity_term,
+        yield_30y as rate_value,
+        spread_2s10s,
+        spread_3m10y,
+        spread_2s30s,
+        term_premium,
+        is_2s10s_inverted,
+        is_3m10y_inverted,
+        yield_10y_1d_chg_bps,
+        yield_10y_5d_chg_bps,
+        yield_2y_1d_chg_bps,
+        cpi_yoy_pct,
+        approx_real_yield_10y,
+        fed_regime,
+        inversion_days_trailing_1y,
+        fi_attractive_flag
     from with_signals
 
 )
@@ -126,7 +222,7 @@ select
     rate_value,
 
     -- Asset class tag for cross-asset joins and filtering
-    'FIXED_INCOME'              as asset_class,
+    'FIXED_INCOME' as asset_class,
 
     -- Curve shape signals (date-level; repeat on every security row for this date)
     spread_2s10s,
