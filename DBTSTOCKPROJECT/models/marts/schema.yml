@@ -1,17 +1,23 @@
 version: 2
 
 models:
-  - name: mart_fixed_income
+  - name: mart_macro_health
     meta:
       owner: data_engineering
       tier: critical
       refresh_frequency: daily
       sla: 4:00 PM ET daily (after market close)
     description: >
-      Fixed income analysis mart. Grain: one row per NYSE trading date.
-      asset_class = 'FIXED_INCOME' for cross-asset comparisons with mart_ml_features (EQUITY).
-      Contains yield curve levels, spread signals, Fed regime classification,
-      and a retirement planning attractiveness flag.
+      Macro economic health mart. Grain: one row per NYSE trading date.
+      Combines Federal Funds Rate and CPI into a daily snapshot with derived signals
+      that characterize the current policy-inflation regime.
+
+      Designed for retirement savers: plain-English economic_health_label alongside
+      quantitative signals (real_fed_funds_rate, inflation_vs_target, policy_stance)
+      so both analysts and family members can interpret macro conditions.
+
+      asset_class = 'MACRO' for cross-asset joins with mart_ml_features (EQUITY)
+      and mart_fixed_income (FIXED_INCOME).
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [date]
@@ -21,25 +27,127 @@ models:
       - name: date
         tests: [not_null, unique]
       - name: asset_class
+        description: Always 'MACRO' — distinguishes from EQUITY and FIXED_INCOME marts
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['MACRO']
+      - name: fed_funds_rate
+        description: Effective federal funds rate (%) — forward-filled from daily observations
+        tests: [not_null]
+      - name: cpi_value
+        description: CPI index level, all urban consumers — forward-filled from monthly releases
+      - name: cpi_yoy_pct
+        description: Year-over-year CPI inflation rate (%) — approximate using ~252-day lag
+      - name: cpi_mom_pct
+        description: Month-over-month CPI change (%) — computed at monthly grain from stg_cpi to avoid forward-fill noise
+      - name: real_fed_funds_rate
+        description: >
+          fed_funds_rate minus cpi_yoy_pct (%). Positive = restrictive (Fed ahead of inflation);
+          negative = accommodative (Fed behind the curve). Null until 252 trading days of CPI history exist.
+      - name: inflation_vs_target
+        description: cpi_yoy_pct minus 2.0 (the Fed's inflation target). Positive = above target.
+      - name: fed_regime
+        description: "'HIKING', 'CUTTING', or 'NEUTRAL' based on 90-day fed funds rate trend"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['HIKING', 'CUTTING', 'NEUTRAL']
+      - name: inflation_regime
+        description: >
+          Inflation severity classification: DEFLATIONARY (<1%), LOW (1–2%),
+          TARGET (2–3%), ELEVATED (3–5%), HIGH (>5%). Null until CPI YoY is available.
+        tests:
+          - accepted_values:
+              values: ['DEFLATIONARY', 'LOW', 'TARGET', 'ELEVATED', 'HIGH']
+              config:
+                where: inflation_regime is not null
+      - name: policy_stance
+        description: >
+          RESTRICTIVE when real_fed_funds_rate > 0.5 pp, ACCOMMODATIVE when < -0.5 pp,
+          NEUTRAL otherwise. Null until CPI YoY is available.
+        tests:
+          - accepted_values:
+              values: ['RESTRICTIVE', 'ACCOMMODATIVE', 'NEUTRAL']
+              config:
+                where: policy_stance is not null
+      - name: fed_behind_curve
+        description: >
+          True when inflation is above the 2% target AND the real Fed Funds Rate is negative —
+          the Fed is subsidising borrowing while prices rise.
+        tests: [not_null]
+      - name: economic_health_label
+        description: >
+          Plain-English macro health label combining inflation regime and Fed policy direction.
+          Values: 'STABLE', 'NORMALIZING — restrictive policy working',
+          'OVERHEATING — Fed hiking', 'STAGFLATION RISK',
+          'DEFLATION RISK — Fed cutting', 'TRANSITIONING'.
+          Null until CPI YoY is available (~252 trading days after first CPI load).
+
+  - name: mart_fixed_income
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 4:00 PM ET daily (after market close)
+    description: >
+      Fixed income analysis mart. Grain: one row per (NYSE trading date, Treasury maturity).
+      6 rows per date — one per US Treasury maturity (3M/2Y/5Y/7Y/10Y/30Y).
+      Instruments without a maturity_term (Federal Funds Rate, CPI) are excluded.
+
+      security_name identifies the specific Treasury instrument; maturity_term carries the
+      original AlphaVantage maturity parameter value. rate_value is the yield (%) for that
+      instrument on that date.
+
+      Date-level derived signals (spread_2s10s, fed_regime, etc.) repeat on every row
+      for a given date and reflect the full fixed income market context for that day.
+
+      asset_class = 'FIXED_INCOME' for cross-asset comparisons with mart_ml_features (EQUITY).
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [date, security_name]
+      - min_row_count:
+          min_rows: 1000
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: security_name
+        description: >
+          Identifies the specific US Treasury instrument in this row.
+          Values: 'US Treasury 3M', 'US Treasury 2Y', 'US Treasury 5Y',
+          'US Treasury 7Y', 'US Treasury 10Y', 'US Treasury 30Y'.
+          Sourced from the AlphaVantage TREASURY_YIELD maturity parameter.
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - 'US Treasury 3M'
+                - 'US Treasury 2Y'
+                - 'US Treasury 5Y'
+                - 'US Treasury 7Y'
+                - 'US Treasury 10Y'
+                - 'US Treasury 30Y'
+      - name: instrument_type
+        description: Always 'TREASURY_YIELD' — mart is scoped to Treasury yield instruments only.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['TREASURY_YIELD']
+      - name: maturity_term
+        description: >
+          Original AlphaVantage maturity label: '3month', '2year', '5year', '7year', '10year', '30year'.
+        tests:
+          - not_null
+      - name: rate_value
+        description: >
+          The instrument's value on this date: yield (%) for Treasury rows,
+          rate (%) for Federal Funds Rate, index value for CPI.
+      - name: asset_class
         description: Always 'FIXED_INCOME' — use to distinguish from mart_ml_features (EQUITY)
         tests:
           - not_null
           - accepted_values:
               values: ['FIXED_INCOME']
-      - name: yield_3m
-        description: 3-month Treasury yield (%)
-      - name: yield_2y
-        description: 2-year Treasury yield (%)
-      - name: yield_5y
-        description: 5-year Treasury yield (%)
-      - name: yield_7y
-        description: 7-year Treasury yield (%)
-      - name: yield_10y
-        description: 10-year Treasury yield — benchmark risk-free rate (%)
-      - name: yield_30y
-        description: 30-year Treasury yield (%)
-      - name: fed_funds_rate
-        description: Effective federal funds rate (%)
       - name: spread_2s10s
         description: 10y minus 2y (pp); negative = inverted curve = recession risk elevated
       - name: spread_3m10y
@@ -58,8 +166,6 @@ models:
         description: 5-day change in 10y yield (basis points)
       - name: yield_2y_1d_chg_bps
         description: 1-day change in 2y yield (basis points)
-      - name: cpi_value
-        description: CPI index value (forward-filled from monthly)
       - name: cpi_yoy_pct
         description: Year-over-year CPI inflation (%)
       - name: approx_real_yield_10y
