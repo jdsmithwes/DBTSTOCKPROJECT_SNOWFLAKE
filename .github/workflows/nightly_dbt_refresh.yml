@@ -1,0 +1,133 @@
+name: Nightly Data Pipeline
+
+# Triggered three ways:
+#   1. schedule — direct cron fallback if Snowflake Task is unavailable
+#   2. workflow_dispatch — manual run from GitHub UI
+#   3. repository_dispatch — fired by the Snowflake Task (analyses/snowflake_task_setup.sql)
+on:
+  schedule:
+    - cron: '0 1 * * 2-6'    # 8 PM ET weekdays (UTC+0 = 1 AM next day, covers Mon-Fri ET)
+  workflow_dispatch:
+  repository_dispatch:
+    types: [trigger-dbt-refresh]
+
+env:
+  SNOWFLAKE_ROLE:      DBT_ROLE
+  SNOWFLAKE_DATABASE:  DBT_STOCKPROJECT
+  SNOWFLAKE_WAREHOUSE: DBT_STOCKPROJECT
+  SNOWFLAKE_SCHEMA:    JDS_STAGING
+  AWS_REGION:          us-east-1
+  DBT_PROJECT_DIR:     ${{ github.workspace }}/DBTSTOCKPROJECT
+  DBT_PROFILES_DIR:    ${{ github.workspace }}/DBTSTOCKPROJECT
+  DBT_EXECUTABLE:      dbt
+
+jobs:
+  nightly-pipeline:
+    name: Fetch → Load → dbt build → Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      # ── Setup ────────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r DBTSTOCKPROJECT/requirements.txt
+
+      - name: Install dbt packages
+        working-directory: DBTSTOCKPROJECT
+        env:
+          SNOWFLAKE_ACCOUNT:          ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:             ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY_PATH: /tmp/snowflake_rsa_key.p8
+        run: dbt deps --profiles-dir .
+
+      - name: Write Snowflake private key
+        run: |
+          echo "${{ secrets.SNOWFLAKE_PRIVATE_KEY }}" > /tmp/snowflake_rsa_key.p8
+          chmod 600 /tmp/snowflake_rsa_key.p8
+
+      # ── Fetch external data ───────────────────────────────────────────────
+      - name: Fetch AlphaVantage company overview
+        env:
+          SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD:     ${{ secrets.SNOWFLAKE_PASSWORD }}
+          ALPHAVANTAGE_API_KEY:   ${{ secrets.ALPHAVANTAGE_API_KEY }}
+        run: python3 Python_Scripts/fetch_av_company_overview.py
+
+      - name: Fetch AlphaVantage fixed income (Treasury yields / CPI / Fed Funds)
+        env:
+          SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD:     ${{ secrets.SNOWFLAKE_PASSWORD }}
+          ALPHAVANTAGE_API_KEY:   ${{ secrets.ALPHAVANTAGE_API_KEY }}
+        run: python3 Python_Scripts/fetch_alphavantage_fixed_income.py
+
+      - name: Fetch FRED macro data (VIX, oil, breakeven, HY spread)
+        env:
+          SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD:     ${{ secrets.SNOWFLAKE_PASSWORD }}
+          FRED_API_KEY:           ${{ secrets.FRED_API_KEY }}
+        run: python3 Python_Scripts/fetch_fred_macro_data.py
+
+      - name: Fetch GDELT geopolitical events
+        env:
+          SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD:     ${{ secrets.SNOWFLAKE_PASSWORD }}
+        run: python3 Python_Scripts/fetch_gdelt_events.py
+
+      - name: Fetch AlphaVantage news sentiment
+        env:
+          SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD:     ${{ secrets.SNOWFLAKE_PASSWORD }}
+          ALPHAVANTAGE_API_KEY:   ${{ secrets.ALPHAVANTAGE_API_KEY }}
+        run: python3 Python_Scripts/fetch_av_news_sentiment.py
+
+      # ── Backfill missing stock prices → COPY INTO → dbt run ──────────────
+      - name: Backfill missing stock prices + dbt run (prod)
+        env:
+          SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD:     ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_ROLE:         DBT_ROLE
+          SNOWFLAKE_WAREHOUSE:    DBT_STOCKPROJECT
+          SNOWFLAKE_DATABASE:     DBT_STOCKPROJECT
+          ALPHAVANTAGE_API_KEY:   ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          AWS_ACCESS_KEY_ID:      ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION:             us-east-1
+          S3_BUCKET_NAME:         ${{ secrets.S3_BUCKET_NAME }}
+          S3_PREFIX:              ${{ secrets.S3_PREFIX }}
+          # Override dbt paths for CI environment
+          DBT_EXECUTABLE:         dbt
+          DBT_PROJECT_DIR:        ${{ github.workspace }}/DBTSTOCKPROJECT
+          DBT_PROFILES_DIR:       ${{ github.workspace }}/DBTSTOCKPROJECT
+          # dbt prod target uses key-pair auth; backfill uses password above.
+          # TODO: migrate backfill_missing_dates.py to key-pair auth to remove SNOWFLAKE_PASSWORD.
+          SNOWFLAKE_PRIVATE_KEY_PATH: /tmp/snowflake_rsa_key.p8
+        run: python3 Python_Scripts/backfill_missing_dates.py
+
+      # ── Data quality gate ────────────────────────────────────────────────
+      - name: dbt test (prod)
+        working-directory: DBTSTOCKPROJECT
+        env:
+          SNOWFLAKE_ACCOUNT:          ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:             ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY_PATH: /tmp/snowflake_rsa_key.p8
+        run: dbt test --target prod --profiles-dir .
+
+      # ── Cleanup (always runs, even on failure) ────────────────────────────
+      - name: Clean up private key
+        if: always()
+        run: rm -f /tmp/snowflake_rsa_key.p8
