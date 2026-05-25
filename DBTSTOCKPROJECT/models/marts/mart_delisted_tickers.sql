@@ -22,11 +22,30 @@ with coverage as (
 
 ),
 
-prices as (
+-- Single scan of stg_stockprice: rank rows newest-first per ticker so that
+-- row 1 = last trading day and row 31 ≈ 30 trading days before last day.
+-- All aggregates (peak, last-day stats, 30d-before price) are computed here.
+price_stats as (
 
-    select ticker, date, close, adjusted_close, volume
-    from {{ ref('stg_stockprice') }}
-    where ticker in (select ticker from coverage)
+    select
+        ticker,
+        max(adjusted_close)                                  as peak_adjusted_close,
+        max(case when rn = 1  then close          end)       as last_close,
+        max(case when rn = 1  then adjusted_close end)       as last_adjusted_close,
+        max(case when rn = 1  then volume         end)       as last_volume,
+        max(case when rn = 31 then adjusted_close end)       as adjusted_close_30d_before
+    from (
+        select
+            ticker,
+            date,
+            close,
+            adjusted_close,
+            volume,
+            row_number() over (partition by ticker order by date desc) as rn
+        from {{ ref('stg_stockprice') }}
+        where ticker in (select ticker from coverage)
+    )
+    group by ticker
 
 ),
 
@@ -34,42 +53,6 @@ company as (
 
     select ticker, company_name, sector, industry, exchange
     from {{ ref('stg_companyoverview') }}
-
-),
-
-last_day as (
-
-    select
-        p.ticker,
-        p.close          as last_close,
-        p.adjusted_close as last_adjusted_close,
-        p.volume         as last_volume
-    from prices   as p
-    join coverage as c
-        on  p.ticker = c.ticker
-        and p.date   = c.last_date
-
-),
-
-peak as (
-
-    select
-        ticker,
-        max(adjusted_close) as peak_adjusted_close
-    from prices
-    group by ticker
-
-),
-
--- 31st most-recent row ≈ 30 trading days before last_date; used to measure
--- momentum into the delisting event. NULL when history is shorter than 31 rows.
-price_30d_before as (
-
-    select p.ticker, p.adjusted_close as adjusted_close_30d_before
-    from prices   as p
-    join coverage as c on p.ticker = c.ticker
-    where p.date <= c.last_date
-    qualify row_number() over (partition by p.ticker order by p.date desc) = 31
 
 )
 
@@ -83,30 +66,28 @@ select
     c.last_date,
     c.trading_days_loaded                                                      as trading_days,
     c.calendar_days_since_last_trade,
-    ld.last_close,
-    ld.last_volume,
-    pk.peak_adjusted_close,
+    ps.last_close,
+    ps.last_volume,
+    ps.peak_adjusted_close,
     round(
-        ld.last_adjusted_close / nullif(pk.peak_adjusted_close, 0),
+        ps.last_adjusted_close / nullif(ps.peak_adjusted_close, 0),
         4
     )                                                                          as price_pct_of_peak_at_exit,
     round(
-        ld.last_adjusted_close / nullif(p30.adjusted_close_30d_before, 0) - 1,
+        ps.last_adjusted_close / nullif(ps.adjusted_close_30d_before, 0) - 1,
         4
     )                                                                          as price_30d_return_at_exit,
     case
         when co.ticker is null
             then 'DELISTED_NO_DATA'
-        when ld.last_adjusted_close / nullif(pk.peak_adjusted_close, 0) >= 0.85
+        when ps.last_adjusted_close / nullif(ps.peak_adjusted_close, 0) >= 0.85
             then 'ACQUISITION_OR_MERGER'
-        when ld.last_adjusted_close / nullif(pk.peak_adjusted_close, 0) < 0.40
+        when ps.last_adjusted_close / nullif(ps.peak_adjusted_close, 0) < 0.40
             then 'BANKRUPTCY_OR_COLLAPSE'
-        when (ld.last_adjusted_close / nullif(p30.adjusted_close_30d_before, 0) - 1) < -0.15
+        when (ps.last_adjusted_close / nullif(ps.adjusted_close_30d_before, 0) - 1) < -0.15
             then 'DISTRESSED_EXIT'
         else 'UNKNOWN'
     end                                                                        as inferred_reason
 from coverage           as c
-left join company       as co  on c.ticker = co.ticker
-left join last_day      as ld  on c.ticker = ld.ticker
-left join peak          as pk  on c.ticker = pk.ticker
-left join price_30d_before as p30 on c.ticker = p30.ticker
+left join company       as co on c.ticker = co.ticker
+left join price_stats   as ps on c.ticker = ps.ticker

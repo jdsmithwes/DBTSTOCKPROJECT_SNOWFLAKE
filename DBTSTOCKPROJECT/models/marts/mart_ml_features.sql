@@ -15,6 +15,9 @@
 -- Economic signals join on exact date; economic indicator data is typically monthly,
 -- so many trading-day rows will have null economic columns. Forward-fill in your
 -- Python preprocessing pipeline before training.
+--
+-- Only tickers classified as COMPLETE by int_ticker_coverage are included.
+-- Delisted and incomplete tickers are excluded via the inner join on complete_tickers.
 
 with price_features as (
 
@@ -77,45 +80,6 @@ company_valuation as (
 
 ),
 
-analyst_signals as (
-
-    select * from {{ ref('int_analyst_signals') }}
-
-),
-
-industry_mapping as (
-
-    select * from {{ ref('int_industry_mapping') }}
-
-),
-
-economic_signals as (
-
-    select * from {{ ref('int_economic_signals') }}
-
-),
-
-macro_signals as (
-
-    select * from {{ ref('int_macro_signals') }}
-
-),
-
-yield_curve as (
-
-    select * from {{ ref('int_yield_curve') }}
-
-),
-
-news_sentiment as (
-
-    select * from {{ ref('int_news_sentiment') }}
-
-),
-
--- Only tickers with continuous, current price data enter the ML matrix.
--- Delisted and incomplete tickers are excluded to prevent their exit patterns
--- from contaminating feature distributions for active S&P 500 stocks.
 complete_tickers as (
 
     select ticker
@@ -186,11 +150,11 @@ spine as (
         im.indicator_industry
 
     from price_features as pf
-    inner join complete_tickers as ct on pf.ticker = ct.ticker
-    left join company_nonfinancial as cn on pf.ticker = cn.ticker
-    left join company_valuation as cv on pf.ticker = cv.ticker
-    left join analyst_signals as sig on pf.ticker = sig.ticker
-    left join industry_mapping as im on upper(trim(cn.industry)) = im.company_industry
+    inner join complete_tickers                        as ct  on pf.ticker = ct.ticker
+    left join company_nonfinancial                     as cn  on pf.ticker = cn.ticker
+    left join company_valuation                        as cv  on pf.ticker = cv.ticker
+    left join {{ ref('int_analyst_signals') }}         as sig on pf.ticker = sig.ticker
+    left join {{ ref('int_industry_mapping') }}        as im  on upper(trim(cn.industry)) = im.company_industry
 
 )
 
@@ -320,17 +284,8 @@ select
     end as dataset_split
 
 from spine as sp
-left join forward_returns as fr
-    on
-        sp.ticker = fr.ticker
-        and sp.date = fr.date
-left join economic_signals as es
-    on
-        sp.indicator_industry = es.indicator_industry
-        and sp.date = es.date
-left join macro_signals as ms
-    on sp.date = ms.date
-left join yield_curve as yc
-    on sp.date = yc.date
-left join news_sentiment as ns
-    on sp.date = ns.date
+left join forward_returns                          as fr  on sp.ticker = fr.ticker and sp.date = fr.date
+left join {{ ref('int_economic_signals') }}        as es  on sp.indicator_industry = es.indicator_industry and sp.date = es.date
+left join {{ ref('int_macro_signals') }}           as ms  on sp.date = ms.date
+left join {{ ref('int_yield_curve') }}             as yc  on sp.date = yc.date
+left join {{ ref('int_news_sentiment') }}          as ns  on sp.date = ns.date
