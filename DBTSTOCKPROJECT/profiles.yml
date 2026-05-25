@@ -3,9 +3,8 @@ dbt_stockproject:
   outputs:
     dev:
       type: snowflake
-      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
-      user: "{{ env_var('SNOWFLAKE_USER') }}"
-      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      account: TPRFGUJ-JNC76647
+      user: jdsmithwes
       role: DBT_ROLE
       database: DBT_STOCKPROJECT
       warehouse: DBT_STOCKPROJECT
