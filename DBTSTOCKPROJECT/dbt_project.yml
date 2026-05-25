@@ -31,6 +31,7 @@ models:
       +materialized: table
       +schema: JDS_MARTS
       +table_format: iceberg
+      +external_volume: DBT_STOCKPROJECT_ICEBERG_VOL
       +storage_serialization_policy: COMPATIBLE
       +on_schema_change: fail
       +tags: ['marts']

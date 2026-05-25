@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  IAM role and policy for the Snowflake external volume that backs dbt-stockproject
+  Iceberg tables.  Deploy this stack ONCE with an admin account, then run
+  Python_Scripts/setup_iceberg_external_volume.py to wire the Snowflake trust.
+
+# ── Parameters ──────────────────────────────────────────────────────────────
+Parameters:
+  IcebergBucket:
+    Type: String
+    Default: dbt-stockproject-iceberg
+    Description: S3 bucket where Snowflake stores Iceberg data files (already created).
+
+  # Filled in by setup_iceberg_external_volume.py after the external volume is created.
+  # Re-deploy the stack with the real values to lock down the trust relationship.
+  SnowflakeIAMUserARN:
+    Type: String
+    Default: "arn:aws:iam::000000000000:user/placeholder"
+    Description: >
+      Snowflake's AWS IAM user ARN — output of DESCRIBE EXTERNAL VOLUME.
+      Deploy once with the placeholder, then re-deploy with the real value.
+
+  SnowflakeExternalID:
+    Type: String
+    Default: "PLACEHOLDER"
+    Description: >
+      Snowflake's external ID — output of DESCRIBE EXTERNAL VOLUME.
+      Deploy once with the placeholder, then re-deploy with the real value.
+
+# ── Resources ────────────────────────────────────────────────────────────────
+Resources:
+  IcebergPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: snowflake-iceberg-dbt-stockproject-policy
+      Description: Allows Snowflake to read/write Iceberg files in dbt-stockproject-iceberg
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: IcebergObjectAccess
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:DeleteObject
+              - s3:DeleteObjectVersion
+            Resource: !Sub "arn:aws:s3:::${IcebergBucket}/*"
+          - Sid: IcebergBucketAccess
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+              - s3:GetBucketLocation
+            Resource: !Sub "arn:aws:s3:::${IcebergBucket}"
+
+  IcebergRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: snowflake-iceberg-dbt-stockproject-role
+      Description: Assumed by Snowflake external volume for dbt-stockproject Iceberg tables
+      MaxSessionDuration: 3600
+      ManagedPolicyArns:
+        - !Ref IcebergPolicy
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref SnowflakeIAMUserARN
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref SnowflakeExternalID
+
+# ── Outputs ──────────────────────────────────────────────────────────────────
+Outputs:
+  RoleArn:
+    Description: IAM role ARN — pass to the Snowflake external volume definition
+    Value: !GetAtt IcebergRole.Arn
+    Export:
+      Name: snowflake-iceberg-dbt-stockproject-role-arn
+
+  RoleName:
+    Description: IAM role name
+    Value: !Ref IcebergRole
