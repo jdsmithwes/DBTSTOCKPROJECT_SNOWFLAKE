@@ -3,6 +3,9 @@ version: "1.0.0"
 config-version: 2
 profile: "dbt_stockproject"
 
+flags:
+  enable_iceberg_materializations: true
+
 model-paths:
   - models
 analysis-paths:
