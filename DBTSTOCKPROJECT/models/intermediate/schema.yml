@@ -366,6 +366,68 @@ models:
         tests:
           - not_null
 
+  - name: int_ticker_coverage
+    description: >
+      Per-ticker coverage statistics and classification against the NYSE trading calendar.
+      Grain: one row per ticker. Used to hard-exclude non-active tickers from mart_ml_features
+      and to populate mart_delisted_tickers.
+
+      coverage_status values:
+        COMPLETE   — last_date within 14 calendar days of dataset end AND coverage_pct >= 95%
+        DELISTED   — last_date more than 63 calendar days behind dataset end
+        INCOMPLETE — everything else (new entrants, data gaps, gray zone)
+    tests:
+      - min_row_count:
+          min_rows: 400
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - unique
+          - not_empty_string
+      - name: first_date
+        description: Earliest trading date present in stg_stockprice for this ticker
+        tests:
+          - not_null
+      - name: last_date
+        description: Most recent trading date present in stg_stockprice for this ticker
+        tests:
+          - not_null
+      - name: trading_days_loaded
+        description: Actual row count in stg_stockprice for this ticker
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+      - name: expected_trading_days
+        description: NYSE trading days from first_date to dataset_end_date (from int_trading_calendar)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+      - name: coverage_pct
+        description: trading_days_loaded / expected_trading_days; 1.0 = no gaps
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+              config:
+                severity: warn
+      - name: calendar_days_since_last_trade
+        description: Calendar days between last_date and dataset_end_date
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: dataset_end_date
+        description: Max trading date from int_trading_calendar (the reference "today" for coverage checks)
+        tests:
+          - not_null
+      - name: coverage_status
+        description: "COMPLETE, DELISTED, or INCOMPLETE — see model description for thresholds"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['COMPLETE', 'DELISTED', 'INCOMPLETE']
+
   - name: int_industry_mapping
     description: >
       Cleaned mapping from company industry labels (AlphaVantage)

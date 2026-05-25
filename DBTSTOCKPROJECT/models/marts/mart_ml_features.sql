@@ -113,6 +113,17 @@ news_sentiment as (
 
 ),
 
+-- Only tickers with continuous, current price data enter the ML matrix.
+-- Delisted and incomplete tickers are excluded to prevent their exit patterns
+-- from contaminating feature distributions for active S&P 500 stocks.
+complete_tickers as (
+
+    select ticker
+    from {{ ref('int_ticker_coverage') }}
+    where coverage_status = 'COMPLETE'
+
+),
+
 spine as (
 
     select
@@ -175,6 +186,7 @@ spine as (
         im.indicator_industry
 
     from price_features as pf
+    inner join complete_tickers as ct on pf.ticker = ct.ticker
     left join company_nonfinancial as cn on pf.ticker = cn.ticker
     left join company_valuation as cv on pf.ticker = cv.ticker
     left join analyst_signals as sig on pf.ticker = sig.ticker

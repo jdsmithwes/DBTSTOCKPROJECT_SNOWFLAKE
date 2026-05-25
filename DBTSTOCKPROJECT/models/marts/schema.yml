@@ -71,6 +71,90 @@ models:
       - name: fi_attractive_flag
         description: True when yield_10y >= 4% — simple heuristic for competitive fixed income returns vs. equities
 
+  - name: mart_delisted_tickers
+    meta:
+      owner: data_engineering
+      tier: operational
+      refresh_frequency: daily
+      sla: daily, after mart_ml_features
+    description: >
+      One row per ticker that has stopped trading (DELISTED in int_ticker_coverage).
+      A ticker is classified as delisted when its last trading date in stg_stockprice
+      is more than 63 calendar days behind the dataset end date.
+
+      inferred_reason classifies the type of exit from price behaviour:
+        ACQUISITION_OR_MERGER   — last price >= 85% of historical peak (stable/elevated at exit)
+        BANKRUPTCY_OR_COLLAPSE  — last price < 40% of historical peak (severe decline)
+        DISTRESSED_EXIT         — 40–85% of peak AND price fell > 15% in the 30 days before exit
+        DELISTED_NO_DATA        — no company overview record in stg_companyoverview
+        UNKNOWN                 — no pattern matched
+
+      Known examples in this dataset: CTRA (ConocoPhillips acquisition), DFS (Capital One
+      acquisition), PXD (ExxonMobil acquisition), WBA (delisting/restructuring).
+    tests:
+      - min_row_count:
+          min_rows: 1
+    columns:
+      - name: ticker
+        description: Stock ticker symbol
+        tests:
+          - not_null
+          - unique
+          - not_empty_string
+      - name: company_name
+        description: Full legal company name from stg_companyoverview; null if no overview record
+      - name: sector
+        description: GICS sector; null if no overview record
+      - name: industry
+        description: Industry sub-classification; null if no overview record
+      - name: exchange
+        description: Listing exchange; null if no overview record
+      - name: first_date
+        description: Earliest trading date in the dataset for this ticker
+        tests:
+          - not_null
+      - name: last_date
+        description: Final trading date in the dataset for this ticker
+        tests:
+          - not_null
+      - name: trading_days
+        description: Total trading days present in stg_stockprice for this ticker
+      - name: calendar_days_since_last_trade
+        description: Calendar days between last_date and the dataset end date
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 64
+      - name: last_close
+        description: Raw closing price on the final trading day
+      - name: last_volume
+        description: Share volume on the final trading day
+      - name: peak_adjusted_close
+        description: Highest adjusted closing price over the ticker's full history
+      - name: price_pct_of_peak_at_exit
+        description: last_adjusted_close / peak_adjusted_close; near 1.0 suggests acquisition at premium
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+              config:
+                severity: warn
+      - name: price_30d_return_at_exit
+        description: >
+          Adjusted close return over the ~30 trading days ending on last_date.
+          Negative and large = price was collapsing into the delisting event.
+          Null when the ticker has fewer than 31 trading days of history.
+      - name: inferred_reason
+        description: Rule-based classification of the delisting type
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - ACQUISITION_OR_MERGER
+                - BANKRUPTCY_OR_COLLAPSE
+                - DISTRESSED_EXIT
+                - DELISTED_NO_DATA
+                - UNKNOWN
+
   - name: mart_data_gaps
     meta:
       owner: data_engineering
