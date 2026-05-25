@@ -89,6 +89,9 @@ ALPHAVANTAGE_API_KEY = os.environ["ALPHAVANTAGE_API_KEY"]
 # AV news history is sparse before 2022; keep this floor even when equity data goes earlier
 AV_NEWS_START_DATE = os.environ.get("AV_NEWS_START_DATE", "2022-01-01")
 AV_REQUEST_DELAY   = float(os.environ.get("AV_REQUEST_DELAY", "2.0"))
+# Days per API window. Premium keys support up to 1000 articles per call;
+# 30-day windows keep each call well within that limit for all topic volumes.
+AV_WINDOW_DAYS     = int(os.environ.get("AV_WINDOW_DAYS", "30"))
 
 ALPHAVANTAGE_URL = "https://www.alphavantage.co/query"
 
@@ -265,26 +268,31 @@ def fetch_all(latest_dates: dict[str, str]) -> pd.DataFrame:
             log.info(f"  {topic}: already up to date")
             continue
 
-        time_from = start.strftime("%Y%m%dT0000")
-        time_to   = today.strftime("%Y%m%dT2359")
+        all_articles: list[dict] = []
+        window_start = start
 
-        log.info(f"  {topic}: fetching {start} → {today}")
-        try:
-            articles = _fetch_topic_articles(topic, time_from, time_to)
-        except requests.RequestException as exc:
-            log.error(f"  {topic}: request failed — {exc}")
+        while window_start <= today:
+            window_end = min(window_start + timedelta(days=AV_WINDOW_DAYS - 1), today)
+            time_from  = window_start.strftime("%Y%m%dT0000")
+            time_to    = window_end.strftime("%Y%m%dT2359")
+
+            try:
+                batch = _fetch_topic_articles(topic, time_from, time_to)
+                all_articles.extend(batch)
+                log.info(f"  {topic} {window_start}→{window_end}: {len(batch)} articles")
+            except requests.RequestException as exc:
+                log.error(f"  {topic} {window_start}: request failed — {exc}")
+
             time.sleep(AV_REQUEST_DELAY)
-            continue
+            window_start = window_end + timedelta(days=1)
 
-        if articles:
-            df_topic = _aggregate_articles(articles, topic)
+        if all_articles:
+            df_topic = _aggregate_articles(all_articles, topic)
             if not df_topic.empty:
                 frames.append(df_topic)
-                log.info(f"    → {len(articles)} articles → {len(df_topic)} daily rows")
+                log.info(f"  {topic}: {len(all_articles)} total articles → {len(df_topic)} daily rows")
         else:
-            log.info(f"    → no articles returned")
-
-        time.sleep(AV_REQUEST_DELAY)
+            log.info(f"  {topic}: no articles returned")
 
     if not frames:
         return pd.DataFrame()

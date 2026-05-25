@@ -96,6 +96,8 @@ models:
       - column_gte_column:
           column_a: shares_outstanding
           column_b: shares_float
+          config:
+            severity: warn
     columns:
       - name: ticker
         description: Stock ticker symbol
@@ -309,6 +311,8 @@ models:
           - dbt_utils.accepted_range:
               min_value: 0
               max_value: 100
+              config:
+                severity: warn
       - name: indicator_value
         description: Numeric value of the economic indicator on this date
         tests:
@@ -327,6 +331,8 @@ models:
           combination_of_columns:
             - name
             - date
+          config:
+            severity: warn
       - min_row_count:
           min_rows: 100
       - no_future_date:

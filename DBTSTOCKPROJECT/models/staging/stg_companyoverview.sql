@@ -127,3 +127,4 @@ select
     try_to_double(raw_payload:"AnalystTargetPrice"::string) as analyst_target_price
 
 from src
+qualify row_number() over (partition by raw_payload:"ticker"::string order by load_timestamp desc) = 1

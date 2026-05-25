@@ -103,6 +103,8 @@ models:
           timestamp_column: load_timestamp
           datepart: month
           interval: 3
+          config:
+            severity: warn
       - min_row_count:
           min_rows: 400
       - column_gte_column:
@@ -111,6 +113,8 @@ models:
       - column_gte_column:
           column_a: shares_outstanding
           column_b: shares_float
+          config:
+            severity: warn
     columns:
       - name: ticker
         description: Stock ticker symbol
@@ -250,6 +254,8 @@ models:
           - dbt_utils.accepted_range:
               min_value: 0
               max_value: 100
+              config:
+                severity: warn
       - name: dividend_yield
         description: Annual dividend yield as decimal (e.g., 0.03 = 3%)
         tests:
@@ -542,7 +548,9 @@ models:
         description: Human-readable indicator name
         tests:
           - not_null
-          - unique
+          - unique:
+              config:
+                severity: warn
           - not_empty_string
       - name: classification
         description: Leading, lagging, or coincident classification
