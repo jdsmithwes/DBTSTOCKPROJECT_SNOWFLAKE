@@ -1,12 +1,38 @@
 dbt_stockproject:
-  target: dev
+  # Switch target via DBT_TARGET env var.
+  # Local (default):           DBT_TARGET not set  → uses 'dev'  (password auth)
+  # Inside Snowflake:          DBT_TARGET=snowflake → uses 'snowflake' (OAuth token)
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+
   outputs:
+
+    # ── Local development ──────────────────────────────────────────────────────
+    # Run dbt from the terminal with credentials in .env:
+    #   set -a && source .env && set +a
+    #   dbt run --profiles-dir .
     dev:
       type: snowflake
-      account: TPRFGUJ-JNC76647
-      user: jdsmithwes
-      role: DBT_ROLE
-      database: DBT_STOCKPROJECT
-      warehouse: DBT_STOCKPROJECT
-      schema: DBT_DEV_JDS_STAGING
+      account:   "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user:      "{{ env_var('SNOWFLAKE_USER') }}"
+      password:  "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role:      "{{ env_var('SNOWFLAKE_ROLE',      'DBT_ROLE') }}"
+      database:  "{{ env_var('SNOWFLAKE_DATABASE',  'DBT_STOCKPROJECT') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DBT_STOCKPROJECT') }}"
+      schema:    "{{ env_var('SNOWFLAKE_SCHEMA',    'DBT_DEV_JDS_STAGING') }}"
+      threads: 8
+
+    # ── Inside Snowflake (OAuth token) ────────────────────────────────────────
+    # Used when dbt runs as a Snowflake Task, in a Snowpark Container,
+    # or any environment where Snowflake injects an OAuth token.
+    # Set DBT_TARGET=snowflake and SNOWFLAKE_TOKEN in the job environment.
+    snowflake:
+      type: snowflake
+      account:       "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user:          "{{ env_var('SNOWFLAKE_USER') }}"
+      authenticator: oauth
+      token:         "{{ env_var('SNOWFLAKE_TOKEN') }}"
+      role:          "{{ env_var('SNOWFLAKE_ROLE',      'DBT_ROLE') }}"
+      database:      "{{ env_var('SNOWFLAKE_DATABASE',  'DBT_STOCKPROJECT') }}"
+      warehouse:     "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DBT_STOCKPROJECT') }}"
+      schema:        "{{ env_var('SNOWFLAKE_SCHEMA',    'DBT_DEV_JDS_STAGING') }}"
       threads: 8
