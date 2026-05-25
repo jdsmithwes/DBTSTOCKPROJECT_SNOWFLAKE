@@ -2,14 +2,14 @@ dbt_stockproject:
   outputs:
     dev:
       type: snowflake
-      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
-      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      account: TPRFGUJ-JNC76647
+      user: jdsmithwes
       password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
-      role: "{{ env_var('SNOWFLAKE_ROLE', 'DBT_ROLE') }}"
-      database: "{{ env_var('SNOWFLAKE_DATABASE', 'DBT_STOCKPROJECT') }}"
-      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DBT_STOCKPROJECT') }}"
-      schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'DBT_DEV_JDS_STAGING') }}"
-      threads: 1
+      role: DBT_ROLE
+      database: DBT_STOCKPROJECT
+      warehouse: DBT_STOCKPROJECT
+      schema: DBT_DEV_JDS_STAGING
+      threads: 8
       client_session_keep_alive: false
       query_tag: dbt
   target: dev
