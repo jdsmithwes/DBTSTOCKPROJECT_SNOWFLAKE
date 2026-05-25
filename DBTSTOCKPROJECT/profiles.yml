@@ -6,33 +6,32 @@ dbt_stockproject:
   outputs:
 
     # ── Local development ──────────────────────────────────────────────────────
-    # Run dbt from the terminal with credentials in .env:
-    #   set -a && source .env && set +a
-    #   dbt run --target dev --profiles-dir .
+    # Key-pair auth — no password, works regardless of Snowflake IP network policy.
+    # Private key lives on this machine at SNOWFLAKE_PRIVATE_KEY_PATH.
+    # Run: set -a && source .env && set +a && dbt run --target dev --profiles-dir .
     dev:
       type: snowflake
-      account:   "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
-      user:      "{{ env_var('SNOWFLAKE_USER') }}"
-      password:  "{{ env_var('SNOWFLAKE_PASSWORD') }}"
-      role:      "{{ env_var('SNOWFLAKE_ROLE',      'DBT_ROLE') }}"
-      database:  "{{ env_var('SNOWFLAKE_DATABASE',  'DBT_STOCKPROJECT') }}"
-      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DBT_STOCKPROJECT') }}"
-      schema:    "{{ env_var('SNOWFLAKE_SCHEMA',    'DBT_DEV_JDS_STAGING') }}"
+      account:           "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user:              "{{ env_var('SNOWFLAKE_USER') }}"
+      private_key_path:  "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      role:              "{{ env_var('SNOWFLAKE_ROLE',      'DBT_ROLE') }}"
+      database:          "{{ env_var('SNOWFLAKE_DATABASE',  'DBT_STOCKPROJECT') }}"
+      warehouse:         "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DBT_STOCKPROJECT') }}"
+      schema:            "{{ env_var('SNOWFLAKE_SCHEMA',    'DBT_DEV_JDS_STAGING') }}"
       threads: 8
 
     # ── Production ────────────────────────────────────────────────────────────
-    # Run against production schemas (no DEV_ prefix). Requires DBT_TARGET=prod.
-    # Uses same credentials as dev; schema resolves to production aliases via
-    # macros/generate_schema_name.sql (JDS_MARTS, JDS_INTERMEDIATE, JDS_STAGING).
+    # Same key-pair auth as dev; schema resolves to production aliases.
+    # Run: DBT_TARGET=prod dbt run --full-refresh --select mart_ml_features --profiles-dir .
     prod:
       type: snowflake
-      account:   "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
-      user:      "{{ env_var('SNOWFLAKE_USER') }}"
-      password:  "{{ env_var('SNOWFLAKE_PASSWORD') }}"
-      role:      "{{ env_var('SNOWFLAKE_ROLE',      'DBT_ROLE') }}"
-      database:  "{{ env_var('SNOWFLAKE_DATABASE',  'DBT_STOCKPROJECT') }}"
-      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DBT_STOCKPROJECT') }}"
-      schema:    "JDS_STAGING"
+      account:           "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user:              "{{ env_var('SNOWFLAKE_USER') }}"
+      private_key_path:  "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      role:              "{{ env_var('SNOWFLAKE_ROLE',      'DBT_ROLE') }}"
+      database:          "{{ env_var('SNOWFLAKE_DATABASE',  'DBT_STOCKPROJECT') }}"
+      warehouse:         "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DBT_STOCKPROJECT') }}"
+      schema:            "JDS_STAGING"
       threads: 8
 
     # ── Inside Snowflake (Workspace / DBT PROJECT / Task) ─────────────────────
