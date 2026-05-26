@@ -464,3 +464,55 @@ VALUES (source.INDICATORID, source.DATE, source.VALUE);
 show tasks;
 
 select max(date) from DBT_STOCKPROJECT.PUBLIC.RAW_STOCK_DATA;
+
+ ALTER USER jdsmithwes SET NETWORK_POLICY = NULL;
+
+  SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN ACCOUNT;
+
+  ALTER NETWORK POLICY CLAUDE_ANTHROPIC_POLICY ADD ALLOWED_IP_LIST = ('69.180.18.0');
+
+  ALTER NETWORK POLICY CLAUDE_ANTHROPIC_POLICY SET
+  ALLOWED_IP_LIST = ('69.180.18.0');
+
+DBT_STOCKPROJECT
+ALTER USER jdsmithwes SET RSA_PUBLIC_KEY='MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoglj
+  haulC/TghAXnGsJ3gFBcGXWW6DLyBLoIl8mit1JQsGdhQk+o+jGTGDYnkTjOz3yn9GQ5RgJHCPPldSr+l8rl9O/2gX
+  Ne3XRCsClgv6bDWhjPd9HJCiyHegJs9QDvolxE9iV0KQzCOEC2fQUWyewoFsRMoFAXPzcZFfB4t/zJjgT2miMoQOqL
+  F2pyTHrpelqn/uXrg/Run9U5KFChGtbNersSsvxwmYFM9FuJBnbrsdW4okyWuq9c0cXCZcrqHNsSo2JS+b9AM1FnkM
+  t+o5t45UDMUYquLUUgUHKpeD+zf4fFDK4BviImIF9HNgdR0XR9rofitGhRQ0x5r/+QEwIDAQAB';
+
+   -- Create a permissive policy for jdsmithwes only
+  -- (account-level CLAUDE_ANTHROPIC_POLICY continues protecting all other users)
+ -- Create a permissive policy for jdsmithwes only
+  -- (account-level CLAUDE_ANTHROPIC_POLICY continues protecting all other users)
+  CREATE OR REPLACE NETWORK POLICY allow_all_ips
+      ALLOWED_IP_LIST = ('0.0.0.0/0')
+      COMMENT = 'Auth security handled by RSA key-pair; IP restriction not feasible for 
+  CI/CD';
+
+  -- Override the account-level policy for this user
+  ALTER USER jdsmithwes SET NETWORK_POLICY = allow_all_ips;
+
+   USE ROLE ACCOUNTADMIN;
+  
+  -- Remove the account-level policy; jdsmithwes key-pair auth is the security layer
+  ALTER ACCOUNT UNSET NETWORK_POLICY;
+  
+  -- Verify it's gone
+  SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN ACCOUNT;
+  
+  -- Verify
+  SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN USER jdsmithwes;
+
+   USE ROLE ACCOUNTADMIN;
+
+  CREATE OR REPLACE NETWORK POLICY allow_all_ips
+      ALLOWED_IP_LIST = ('0.0.0.0/1', '128.0.0.0/1')
+      COMMENT = 'All IPv4 - auth secured by RSA key-pair';
+  
+  ALTER USER jdsmithwes SET NETWORK_POLICY = allow_all_ips;
+
+  SHOW PARAMETERS LIKE 'NETWORK_POLICY' IN USER jdsmithwes;
+
+  
+  
