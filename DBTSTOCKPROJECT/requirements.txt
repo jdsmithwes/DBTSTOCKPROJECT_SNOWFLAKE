@@ -1,11 +1,11 @@
 # Runtime dependencies for Python_Scripts/ and dbt
 # Pinned to match local dev environment (Python 3.11)
 
-# dbt
+# dbt (pins the connector version transitively to >=3.17.2,<4.0.0)
 dbt-snowflake==1.10.3
 
-# Snowflake connector (used directly by Python scripts)
-snowflake-connector-python==4.5.0
+# Snowflake connector — version controlled by dbt-snowflake; do not pin here
+snowflake-connector-python>=3.17.2,<4.0.0
 
 # AWS / S3 (backfill_missing_dates.py uploads to S3 before COPY INTO)
 boto3==1.42.4
