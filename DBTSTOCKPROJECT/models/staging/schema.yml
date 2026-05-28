@@ -1,6 +1,26 @@
 version: 2
 
 models:
+  - name: stg_ml_predictions
+    description: >
+      Deduped raw ML predictions from RAW_ML_PREDICTIONS. Ephemeral.
+      One row per (ticker, date, horizon, model_version) — latest run_timestamp wins.
+    columns:
+      - name: ticker
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: horizon
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['3m', '6m', '9m', '12m']
+      - name: predicted_return
+        tests: [not_null]
+      - name: model_version
+        tests: [not_null]
+
   - name: stg_stockprice
     meta:
       owner: data_engineering
