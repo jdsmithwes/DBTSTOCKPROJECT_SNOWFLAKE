@@ -110,6 +110,24 @@ sources:
           - min_row_count:
               min_rows: 10
 
+  - name: ML_PREDICTIONS
+    database: DBT_STOCKPROJECT
+    schema: PUBLIC
+    description: Raw ML model predictions written by train_ml_model.py
+    tables:
+      - name: RAW_ML_PREDICTIONS
+        description: >
+          One row per (ticker, date, horizon, model_version). Written nightly by
+          train_ml_model.py before dbt run. All four horizons (3m/6m/9m/12m) are
+          stored in long format. model_version is the UTC run date (YYYY-MM-DD).
+        freshness:
+          warn_after: {count: 48, period: hour}
+          error_after: {count: 96, period: hour}
+        loaded_at_field: run_timestamp
+        tests:
+          - min_row_count:
+              min_rows: 1000
+
   - name: ECONOMIC_INDICATORS
     database: INDUSTRYBASED_ECONOMIC_LEADING_INDICATORS
     schema: PUBLIC

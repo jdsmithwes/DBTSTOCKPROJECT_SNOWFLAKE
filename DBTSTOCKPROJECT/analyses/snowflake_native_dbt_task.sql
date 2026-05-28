@@ -121,10 +121,13 @@ def run_pipeline(session):
     shutil.rmtree(EXTRACT_ROOT, ignore_errors=True)
     os.makedirs(EXTRACT_ROOT, exist_ok=True)
 
-    # ── 1. Install dbt-snowflake ─────────────────────────────
+    # ── 1. Install dbt-snowflake + ML deps ──────────────────
     log['pip'] = _run([
         sys.executable, '-m', 'pip', 'install',
-        'dbt-snowflake==1.10.3', '--quiet', '--no-warn-script-location',
+        'dbt-snowflake==1.10.3',
+        'xgboost>=2.0.0',
+        'scikit-learn>=1.3.0',
+        '--quiet', '--no-warn-script-location',
     ])
     if log['pip']['returncode'] != 0:
         return {'status': 'FAILED', 'stage': 'pip_install', 'log': log}
@@ -146,7 +149,25 @@ def run_pipeline(session):
     with open(PROFILES_PATH, 'w') as f:
         f.write(PROFILES_TEMPLATE.format(key_path=KEY_PATH))
 
-    # ── 5. Locate dbt binary ─────────────────────────────────
+    # ── 5. Train ML models → write RAW_ML_PREDICTIONS ────────
+    ml_env = os.environ.copy()
+    ml_env.update({
+        'SNOWFLAKE_ACCOUNT':          'TPRFGUJ-JNC76647',
+        'SNOWFLAKE_USER':             'jdsmithwes',
+        'SNOWFLAKE_PRIVATE_KEY_PATH': KEY_PATH,
+        'SNOWFLAKE_ROLE':             'DBT_ROLE',
+        'SNOWFLAKE_WAREHOUSE':        'DBT_STOCKPROJECT',
+        'SNOWFLAKE_DATABASE':         'DBT_STOCKPROJECT',
+    })
+    log['ml_train'] = _run(
+        [sys.executable, f'{REPO_DIR}/Python_Scripts/train_ml_model.py'],
+        cwd=REPO_DIR, env=ml_env,
+    )
+    if log['ml_train']['returncode'] != 0:
+        _cleanup()
+        return {'status': 'FAILED', 'stage': 'ml_train', 'log': log}
+
+    # ── 6. Locate dbt binary ─────────────────────────────────
     dbt = os.path.join(os.path.dirname(sys.executable), 'dbt')
     base_flags = [
         '--profiles-dir', PROJECT_DIR,
@@ -155,13 +176,13 @@ def run_pipeline(session):
         '--no-use-colors',
     ]
 
-    # ── 6. dbt run ───────────────────────────────────────────
+    # ── 7. dbt run ───────────────────────────────────────────
     log['dbt_run'] = _run([dbt, 'run'] + base_flags, cwd=PROJECT_DIR)
     if log['dbt_run']['returncode'] != 0:
         _cleanup()
         return {'status': 'FAILED', 'stage': 'dbt_run', 'log': log}
 
-    # ── 7. dbt test ──────────────────────────────────────────
+    # ── 8. dbt test ──────────────────────────────────────────
     log['dbt_test'] = _run([dbt, 'test'] + base_flags, cwd=PROJECT_DIR)
     test_ok = log['dbt_test']['returncode'] == 0
 
@@ -203,7 +224,7 @@ AS
 
 -- ── Step 7: Manual test ───────────────────────────────────────────────────────
 -- Run the procedure once manually before activating the Task.
--- Expect ~5–8 minutes for pip install + dbt run + dbt test.
+-- Expect ~12–18 minutes: pip install + ML training (~8 min) + dbt run + dbt test.
 
 -- CALL DBT_STOCKPROJECT.PUBLIC.RUN_NIGHTLY_DBT();
 

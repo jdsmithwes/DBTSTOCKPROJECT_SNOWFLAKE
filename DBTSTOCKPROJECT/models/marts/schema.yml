@@ -1,6 +1,89 @@
 version: 2
 
 models:
+  - name: mart_ml_predictions
+    meta:
+      owner: data_engineering
+      tier: critical
+      refresh_frequency: daily
+      sla: 6:00 PM ET daily (after model training + dbt run)
+    description: >
+      ML model prediction history. Grain: (ticker, date, horizon, model_version).
+      Incremental Iceberg table — each nightly run appends one new model_version.
+
+      Joins predictions from train_ml_model.py against mart_ml_features actuals.
+      Rows where actual_return is null are inference rows (future outcome not yet known).
+      Evaluation metrics (abs_error, residual, directional_correct) populate as
+      forward returns materialise over time.
+
+      Horizons: 3m / 6m / 9m / 12m forward return.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, date, horizon, model_version]
+    columns:
+      - name: ticker
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: horizon
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['3m', '6m', '9m', '12m']
+      - name: predicted_return
+        tests: [not_null]
+      - name: model_version
+        tests: [not_null]
+      - name: directional_correct
+        description: >
+          True if sign(predicted_return) == sign(actual_return). Null for inference rows.
+
+  - name: mart_model_evaluation
+    meta:
+      owner: data_engineering
+      tier: standard
+      refresh_frequency: daily
+    description: >
+      Aggregated ML model performance metrics. Grain: (horizon, model_version, sector).
+      sector = 'ALL' for the cross-sector aggregate row.
+
+      Key metrics:
+        mae                 — Mean Absolute Error (lower is better)
+        rmse                — Root Mean Squared Error
+        directional_accuracy — % of predictions with correct sign
+        mean_daily_ic       — Mean cross-sectional IC per date (target: > 0.05)
+        ic_ir               — IC Information Ratio = mean_IC / std_IC (signal consistency)
+        mean_daily_rank_ic  — Spearman rank IC (more robust to return outliers)
+
+      Only rows where actual_return is known are included.
+      Full-refresh each run — recalculates metrics for all model versions.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [horizon, model_version, sector]
+    columns:
+      - name: horizon
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['3m', '6m', '9m', '12m']
+      - name: model_version
+        tests: [not_null]
+      - name: sector
+        tests: [not_null]
+      - name: mae
+        description: Mean absolute prediction error across all evaluable rows
+      - name: directional_accuracy
+        description: Fraction of predictions where sign(predicted) == sign(actual)
+        tests:
+          - accepted_range:
+              min_value: 0
+              max_value: 1
+              severity: warn
+      - name: mean_daily_ic
+        description: >
+          Average cross-sectional Pearson IC. IC > 0.05 indicates a useful signal;
+          IC > 0.10 is considered strong for equity factors.
+
   - name: mart_macro_health
     meta:
       owner: data_engineering
